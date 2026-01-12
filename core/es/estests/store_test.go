@@ -1,0 +1,225 @@
+package estests
+
+import (
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/codewandler/clstr-go/adapters/nats"
+	"github.com/codewandler/clstr-go/core/es"
+	"github.com/codewandler/clstr-go/core/es/estests/domain"
+	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/stretchr/testify/require"
+)
+
+type storeSUT struct {
+	name string
+	s    es.EventStore
+}
+
+func getStoreSUTs(t *testing.T) []storeSUT {
+	return []storeSUT{
+		{name: "memory", s: es.NewInMemoryStore()},
+		func() storeSUT {
+			connectNatsC := nats.NewTestContainer(t)
+			natsES, err := nats.NewEventStore(nats.EventStoreConfig{
+				Log:     slog.Default(),
+				Connect: connectNatsC,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, natsES)
+			return storeSUT{name: "nats", s: natsES}
+		}(),
+	}
+}
+
+type Tef func(opts ...es.EnvOption) *es.TestingEnv
+type TestFunc func(t *testing.T, tef Tef)
+
+func eachStore(testFunc TestFunc) func(t *testing.T) {
+	return func(t *testing.T) {
+		//t.Parallel()
+
+		//t.Run("foo", func(t *testing.T) {})
+
+		for _, sut := range getStoreSUTs(t) {
+			sut := sut
+			t.Run(sut.name, func(t *testing.T) {
+				testFunc(
+					t,
+					func(opts ...es.EnvOption) *es.TestingEnv {
+						return es.NewTestEnv(
+							t,
+							es.WithSnapshotter(es.NewInMemorySnapshotter(slog.Default())),
+							es.WithAggregates(new(domain.TestAgg)),
+							es.WithStore(sut.s),
+							es.WithEnvOpts(opts...),
+						)
+					},
+				)
+			})
+		}
+	}
+}
+
+func TestEventStore_All(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	t.Run("start sequence", eachStore(func(t *testing.T, tef Tef) {
+		sut := tef().Store()
+
+		ar, err := sut.Append(
+			t.Context(),
+			"aggType",
+			"aggID",
+			0,
+			[]es.Envelope{
+				{ID: gonanoid.Must(), AggregateID: "1234", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
+				{ID: gonanoid.Must(), AggregateID: "1235", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
+			},
+		)
+		// TODO: protect against id+type missmatch
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), ar.LastSeq)
+	}))
+
+	t.Run("create, mutate, load", eachStore(func(t *testing.T, tef Tef) {
+		te := tef()
+
+		a := domain.NewTestAgg("1000")
+		require.Equal(t, "1000", a.GetID())
+		require.Equal(t, 0, a.Count())
+
+		t.Run("mutate", func(t *testing.T) {
+			require.NoError(t, a.Inc())
+			require.Equal(t, 1, a.Count())
+			require.NoError(t, te.Repository().Save(t.Context(), a))
+		})
+
+		t.Run("load", func(t *testing.T) {
+			loaded := domain.NewTestAgg("1000")
+			require.NoError(t, te.Repository().Load(t.Context(), loaded))
+			require.Equal(t, 1, loaded.Count())
+			require.Equal(t, "1000", loaded.GetID())
+			require.Equal(t, 1, loaded.GetVersion())
+		})
+
+		t.Run("inspect events", func(t *testing.T) {
+			sut := te.Store()
+
+			allEvents, err := sut.Load(t.Context(), a.GetAggType(), a.GetID())
+			require.NoError(t, err)
+			require.NotNil(t, allEvents)
+			require.Len(t, allEvents, 1)
+
+			first := allEvents[0]
+			require.NotEmpty(t, first.Seq)
+			require.Equal(t, 1, first.Version)
+		})
+	}))
+
+	t.Run("snapshots", eachStore(func(t *testing.T, tef Tef) {
+		var (
+			te      = tef(es.WithSnapshotter(es.NewInMemorySnapshotter(slog.Default())))
+			tr      = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
+			aggID   = "my-agg-1"
+			aggType = tr.GetAggType()
+		)
+
+		t.Run("save agg with snapshot", func(t *testing.T) {
+			a := tr.NewWithID(aggID)
+			require.NoError(t, a.Inc())
+			require.NoError(t, tr.Save(t.Context(), a, es.WithSnapshot(true)))
+		})
+
+		t.Run("load snapshot", func(t *testing.T) {
+			ss, err := es.LoadSnapshot(t.Context(), te.Snapshotter(), aggType, aggID)
+			require.NoError(t, err)
+			require.NotNil(t, ss)
+			require.NotEmpty(t, ss.SnapshotID)
+			require.Equal(t, uint64(1), ss.StreamSeq)
+			require.Equal(t, aggID, ss.ObjID)
+			require.Equal(t, aggType, ss.ObjType)
+			require.Equal(t, 1, ss.ObjVersion)
+		})
+
+		t.Run("apply snapshot", func(t *testing.T) {
+			a := tr.NewWithID(aggID)
+			require.NoError(t, es.ApplySnapshot(t.Context(), te.Snapshotter(), a))
+			require.Equal(t, 1, a.GetVersion(), "version must be correct")
+			require.Equal(t, uint64(1), a.GetSeq(), "seq must be correct")
+			require.Equal(t, 1, a.Count(), "count must be correct")
+		})
+
+		t.Run("load with snapshot option", func(t *testing.T) {
+			a, err := tr.GetByID(t.Context(), aggID, es.WithSnapshot(true))
+			require.NoError(t, err)
+			require.NotNil(t, a)
+			require.Equal(t, 1, a.GetVersion(), "version must be correct")
+			require.Equal(t, 1, a.Count(), "count must be correct")
+		})
+	}))
+
+	t.Run("loadtest", eachStore(func(t *testing.T, tef Tef) {
+		// --- config ---
+		var (
+			N     = 5_000
+			aggID = "lt-5000"
+			te    = tef()
+		)
+
+		// state
+		a1 := domain.NewTestAgg(aggID)
+		numMutations := 0
+		numIncrements := 0
+
+		for i := 0; i < N; i++ {
+			require.NoError(t, a1.Inc())
+			numMutations++
+			numIncrements++
+
+			require.Equal(t, numIncrements, a1.NumIncrements)
+
+			// reset at 20
+			if a1.Counter == 20 {
+				require.NoError(t, a1.Reset())
+				require.NoError(t, te.Repository().Save(t.Context(), a1))
+				numMutations++
+			}
+
+			if i%1000 == 0 && i > 0 || i == N-20 {
+				require.NoError(t, te.Repository().Save(t.Context(), a1, es.WithSnapshot(true)))
+				require.Equal(t, numMutations, a1.GetVersion())
+			} else if i%100 == 0 && i > 0 {
+				require.NoError(t, te.Repository().Save(t.Context(), a1))
+				require.Equal(t, numMutations, a1.GetVersion())
+			}
+		}
+
+		// final save
+		println("--- before save ---")
+		require.NoError(t, te.Repository().Save(t.Context(), a1))
+		require.Equal(t, numMutations, a1.GetVersion())
+		require.Equal(t, numIncrements, a1.NumIncrements)
+		require.Equal(t, numIncrements, N)
+		// do create another snapshot
+		/*ss, err := te.Repository().CreateSnapshot(t.Context(), a1)
+		require.NoError(t, err)
+		require.NotNil(t, ss)*/
+		println("=== SAVED ===")
+
+		// === load ===
+		println("=== LOADING ===")
+		loadAt := time.Now()
+
+		a2 := domain.NewTestAgg(aggID)
+		require.NoError(t, te.Repository().Load(t.Context(), a2, es.WithSnapshot(true)))
+
+		loadTook := time.Since(loadAt)
+		t.Logf("load took: %s", loadTook)
+
+		require.Equal(t, N, a2.NumIncrements)
+		require.Equal(t, a1.Count(), a2.Count())
+		require.Equal(t, a1.GetSeq(), a2.GetSeq())
+	}))
+}
