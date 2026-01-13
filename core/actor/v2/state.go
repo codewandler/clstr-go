@@ -56,7 +56,15 @@ func NewState[T any](ctx context.Context, data *T, cb func(*T)) *State[T] {
 }
 
 func (s *State[T]) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.data)
+	type dataErr struct {
+		data []byte
+		err  error
+	}
+	v := Read[T, dataErr](s, func(st *T) dataErr {
+		d, err := json.Marshal(s.data)
+		return dataErr{d, err}
+	})
+	return v.data, v.err
 }
 
 func (s *State[T]) Process(ops ...StateOp[T]) {
