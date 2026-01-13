@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestNats_Eventsourcing(t *testing.T) {
 		require.NotNil(t, si)
 		require.Equal(t, "CLSTR_ES", si.Config.Name)
 		require.Equal(t, uint64(1), si.Config.FirstSeq)
-		require.Equal(t, []string{"clstr.es.>"}, si.Config.Subjects)
+		require.Equal(t, []string{fmt.Sprintf("%s.>", defaultSubjectPrefix)}, si.Config.Subjects)
 	})
 
 	t.Run("end state", func(t *testing.T) {

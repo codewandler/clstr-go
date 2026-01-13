@@ -16,6 +16,10 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+const (
+	defaultSubjectPrefix = "clstr.es"
+)
+
 type storeLoadOptions struct {
 	startVersion int
 	startSeq     uint64 // startSeq is the minimum sequence to include
@@ -34,13 +38,13 @@ type EventStoreConfig struct {
 }
 
 type EventStore struct {
-	nc         *natsgo.Conn
-	js         jetstream.JetStream
-	stream     jetstream.Stream
-	log        *slog.Logger
-	prefix     string
-	streamName string
-	renameType func(string) string
+	nc            *natsgo.Conn
+	js            jetstream.JetStream
+	stream        jetstream.Stream
+	log           *slog.Logger
+	subjectPrefix string
+	streamName    string
+	renameType    func(string) string
 }
 
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
@@ -69,14 +73,14 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 		streamName = "CLSTR_ES"
 	}
 
-	streamSubjects := cfg.StreamSubjects
-	if streamSubjects == nil || len(streamSubjects) == 0 {
-		streamSubjects = []string{"clstr.es.>"}
-	}
-
 	subjectPrefix := cfg.SubjectPrefix
 	if subjectPrefix == "" {
-		subjectPrefix = "clstr"
+		subjectPrefix = defaultSubjectPrefix
+	}
+
+	streamSubjects := cfg.StreamSubjects
+	if streamSubjects == nil || len(streamSubjects) == 0 {
+		streamSubjects = []string{fmt.Sprintf("%s.>", subjectPrefix)}
 	}
 
 	log = log.With(
@@ -107,30 +111,14 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 	log.Info("ensured", slog.Any("stream", streamInfo))
 
 	return &EventStore{
-		nc:         nc,
-		js:         js,
-		log:        log,
-		stream:     stream,
-		prefix:     subjectPrefix,
-		streamName: streamName,
-		renameType: cfg.RenameType,
+		nc:            nc,
+		js:            js,
+		log:           log,
+		stream:        stream,
+		subjectPrefix: subjectPrefix,
+		streamName:    streamName,
+		renameType:    cfg.RenameType,
 	}, nil
-}
-
-func ensureStream(js jetstream.JetStream, cfg jetstream.StreamConfig) (s jetstream.Stream, si *jetstream.StreamInfo, err error) {
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*natsgo.DefaultTimeout)
-	defer cancel()
-
-	s, err = js.CreateOrUpdateStream(ctx, cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	si, err = s.Info(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return s, si, nil
 }
 
 func (e *EventStore) Close() error {
@@ -145,8 +133,19 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	options := es.NewSubscribeOpts(opts...)
 
-	filterSubjects := []string{
-		e.prefix + ".es.>",
+	var filterSubjects []string
+	for _, f := range options.Filters() {
+		if f.AggregateType != "" && f.AggregateID != "" {
+			filterSubjects = append(filterSubjects, e.subjectForAggregate(f.AggregateType, f.AggregateID))
+		} else if f.AggregateType != "" {
+			filterSubjects = append(filterSubjects, e.subjectForAggregate(f.AggregateType, "*"))
+		} else {
+			return nil, fmt.Errorf("invalid filter: %+v", f)
+		}
+	}
+
+	if filterSubjects == nil || len(filterSubjects) == 0 {
+		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
 	ch := make(chan es.Envelope, 64)
@@ -435,6 +434,22 @@ func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Env
 	return ack.Sequence, nil
 }
 
+func ensureStream(js jetstream.JetStream, cfg jetstream.StreamConfig) (s jetstream.Stream, si *jetstream.StreamInfo, err error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*natsgo.DefaultTimeout)
+	defer cancel()
+
+	s, err = js.CreateOrUpdateStream(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	si, err = s.Info(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, si, nil
+}
+
 func (e *EventStore) decodeMsg(msg jetstream.Msg) (env *es.Envelope, err error) {
 	var md *jetstream.MsgMetadata
 	md, err = msg.Metadata()
@@ -490,7 +505,7 @@ func (e *EventStore) subjectForAggregate(aggregateType, aggregateID string) stri
 	if e.renameType != nil {
 		aggregateType = e.renameType(aggregateType)
 	}
-	return e.prefix + ".es." + aggregateType + "." + aggregateID
+	return e.subjectPrefix + "." + aggregateType + "." + aggregateID
 }
 
 // --- Subscription ---
