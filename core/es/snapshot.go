@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
@@ -21,9 +22,9 @@ type (
 	Snapshot struct {
 		SnapshotID string `json:"snapshot_id"` // SnapshotID is the unique ID of the snapshot
 
-		ObjID      string `json:"obj_id"`      // ObjectID is the ID of the object that was snapshotted
-		ObjType    string `json:"obj_type"`    // ObjectType is the type of the object that was snapshotted
-		ObjVersion int    `json:"obj_version"` // Version is the version of the object at the time of snapshot
+		ObjID      string        `json:"obj_id"`      // ObjectID is the ID of the object that was snapshotted
+		ObjType    string        `json:"obj_type"`    // ObjectType is the type of the object that was snapshotted
+		ObjVersion types.Version `json:"obj_version"` // Version is the version of the object at the time of snapshot
 
 		StreamSeq uint64 `json:"stream_seq"` // StreamSeq is the global sequence number from the store
 
@@ -50,7 +51,7 @@ func (s *Snapshot) logAttrs() slog.Attr {
 		slog.String("id", s.SnapshotID),
 		slog.String("obj_type", s.ObjType),
 		slog.String("obj_id", s.ObjID),
-		slog.Int("obj_version", s.ObjVersion),
+		s.ObjVersion.SlogAttrWithKey("obj_version"),
 		slog.Uint64("seq", s.StreamSeq),
 		slog.Time("created_at", s.CreatedAt),
 

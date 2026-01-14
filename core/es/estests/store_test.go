@@ -9,6 +9,7 @@ import (
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
+	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -102,7 +103,7 @@ func TestEventStore_All(t *testing.T) {
 			require.NoError(t, te.Repository().Load(t.Context(), loaded))
 			require.Equal(t, 1, loaded.Count())
 			require.Equal(t, "1000", loaded.GetID())
-			require.Equal(t, 1, loaded.GetVersion())
+			require.Equal(t, types.Version(1), loaded.GetVersion())
 		})
 
 		t.Run("inspect events", func(t *testing.T) {
@@ -115,7 +116,7 @@ func TestEventStore_All(t *testing.T) {
 
 			first := allEvents[0]
 			require.NotEmpty(t, first.Seq)
-			require.Equal(t, 1, first.Version)
+			require.Equal(t, types.Version(1), first.Version)
 		})
 	}))
 
@@ -141,13 +142,13 @@ func TestEventStore_All(t *testing.T) {
 			require.Equal(t, uint64(1), ss.StreamSeq)
 			require.Equal(t, aggID, ss.ObjID)
 			require.Equal(t, aggType, ss.ObjType)
-			require.Equal(t, 1, ss.ObjVersion)
+			require.Equal(t, types.Version(1), ss.ObjVersion)
 		})
 
 		t.Run("apply snapshot", func(t *testing.T) {
 			a := tr.NewWithID(aggID)
 			require.NoError(t, es.ApplySnapshot(t.Context(), te.Snapshotter(), a))
-			require.Equal(t, 1, a.GetVersion(), "version must be correct")
+			require.Equal(t, types.Version(1), a.GetVersion(), "version must be correct")
 			require.Equal(t, uint64(1), a.GetSeq(), "seq must be correct")
 			require.Equal(t, 1, a.Count(), "count must be correct")
 		})
@@ -156,7 +157,7 @@ func TestEventStore_All(t *testing.T) {
 			a, err := tr.GetByID(t.Context(), aggID, es.WithSnapshot(true))
 			require.NoError(t, err)
 			require.NotNil(t, a)
-			require.Equal(t, 1, a.GetVersion(), "version must be correct")
+			require.EqualValues(t, 1, a.GetVersion(), "version must be correct")
 			require.Equal(t, 1, a.Count(), "count must be correct")
 		})
 	}))
@@ -190,17 +191,17 @@ func TestEventStore_All(t *testing.T) {
 
 			if i%1000 == 0 && i > 0 || i == N-20 {
 				require.NoError(t, te.Repository().Save(t.Context(), a1, es.WithSnapshot(true)))
-				require.Equal(t, numMutations, a1.GetVersion())
+				require.Equal(t, types.Version(numMutations), a1.GetVersion())
 			} else if i%100 == 0 && i > 0 {
 				require.NoError(t, te.Repository().Save(t.Context(), a1))
-				require.Equal(t, numMutations, a1.GetVersion())
+				require.Equal(t, types.Version(numMutations), a1.GetVersion())
 			}
 		}
 
 		// final save
 		println("--- before save ---")
 		require.NoError(t, te.Repository().Save(t.Context(), a1))
-		require.Equal(t, numMutations, a1.GetVersion())
+		require.Equal(t, types.Version(numMutations), a1.GetVersion())
 		require.Equal(t, numIncrements, a1.NumIncrements)
 		require.Equal(t, numIncrements, N)
 		// do create another snapshot

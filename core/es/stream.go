@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/codewandler/clstr-go/core/es/envelope"
+	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 type DeliverPolicy string
@@ -22,7 +23,7 @@ type SubscribeOpts struct {
 	deliverPolicy DeliverPolicy
 	filters       []SubscribeFilter
 	startSequence uint64
-	startVersion  int
+	startVersion  types.Version
 }
 
 func (s *SubscribeOpts) DeliverPolicy() DeliverPolicy { return s.deliverPolicy }

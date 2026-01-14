@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/codewandler/clstr-go/core/es/assert"
+	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 var (
@@ -29,8 +30,9 @@ type Aggregate interface {
 	GetAggType() string
 	GetID() string
 	SetID(string)
-	GetVersion() int
-	setVersion(int)
+
+	GetVersion() types.Version
+	setVersion(types.Version)
 
 	GetSeq() uint64
 	setSeq(uint64)
@@ -70,7 +72,7 @@ type BaseAggregate struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	id          string
-	version     int
+	version     types.Version
 	seq         uint64
 	uncommitted []any
 }
@@ -98,13 +100,12 @@ func (b *BaseAggregate) Create(id string) error {
 	return RaiseAndApply(b, &AggregateCreatedEvent{ID: id, CreatedAt: time.Now()})
 }
 
-func (b *BaseAggregate) GetID() string    { return b.id }
-func (b *BaseAggregate) SetID(id string)  { b.id = id }
-func (b *BaseAggregate) GetVersion() int  { return b.version }
-func (b *BaseAggregate) setVersion(v int) { b.version = v }
-
-func (b *BaseAggregate) GetSeq() uint64  { return b.seq }
-func (b *BaseAggregate) setSeq(s uint64) { b.seq = s }
+func (b *BaseAggregate) GetID() string              { return b.id }
+func (b *BaseAggregate) SetID(id string)            { b.id = id }
+func (b *BaseAggregate) GetVersion() types.Version  { return b.version }
+func (b *BaseAggregate) setVersion(v types.Version) { b.version = v }
+func (b *BaseAggregate) GetSeq() uint64             { return b.seq }
+func (b *BaseAggregate) setSeq(s uint64)            { b.seq = s }
 
 // Raise records an event as uncommitted.
 // (Typically you call Raise+Apply together via a helper like ApplyNew below.)

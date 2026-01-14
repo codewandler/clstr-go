@@ -2,6 +2,7 @@ package proj
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -46,8 +47,13 @@ func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Env
 
 	// Idempotency check per projection + aggregate stream.
 	aggKey := fmt.Sprintf("%s:%s", env.AggregateType, env.AggregateID)
-	last, ok := dp.cpStore.Get(name, aggKey)
-	if ok && env.Version <= last {
+	last, err := dp.cpStore.Get(name, aggKey)
+	if err != nil && !errors.Is(err, ErrCheckpointNotFound) {
+		return fmt.Errorf("failed to get checkpoint for projection %s: %w", name, err)
+	}
+
+	// skip
+	if env.Version <= last {
 		return nil
 	}
 

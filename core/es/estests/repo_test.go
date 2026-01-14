@@ -40,7 +40,7 @@ func TestRepository_Typed(t *testing.T) {
 	// init
 	a := repo.NewWithID(aggID)
 	require.Equal(t, aggID, a.GetID())
-	require.Equal(t, 0, a.GetVersion())
+	require.EqualValues(t, 0, a.GetVersion())
 
 	// load fails
 	require.ErrorIs(t, repo.Load(t.Context(), a), es.ErrAggregateNotFound)
@@ -48,21 +48,21 @@ func TestRepository_Typed(t *testing.T) {
 	// save
 	require.NoError(t, a.IncBy(7))
 	require.NoError(t, repo.Save(t.Context(), a))
-	require.Equal(t, 1, a.GetVersion())
-	require.Equal(t, 7, a.Count())
+	require.EqualValues(t, 1, a.GetVersion())
+	require.EqualValues(t, 7, a.Count())
 
 	t.Run("load", func(t *testing.T) {
 		// init
 		loaded := repo.NewWithID(aggID)
 		require.Equal(t, aggID, loaded.GetID())
 		require.Equal(t, uint64(0), loaded.GetSeq())
-		require.Equal(t, 0, loaded.GetVersion())
+		require.EqualValues(t, 0, loaded.GetVersion())
 
 		// load
 		require.NoError(t, repo.Load(t.Context(), loaded))
 		t.Logf("loaded: %+v", loaded)
-		require.Equal(t, 7, loaded.Count())
-		require.Equal(t, 1, loaded.GetVersion())
+		require.EqualValues(t, 7, loaded.Count())
+		require.EqualValues(t, 1, loaded.GetVersion())
 	})
 
 	t.Run("load by ID", func(t *testing.T) {

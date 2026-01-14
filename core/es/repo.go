@@ -106,7 +106,11 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 				return fmt.Errorf("failed to apply snapshot: %w", err)
 			}
 		} else {
-			log.Debug("snapshot applied", slog.Uint64("seq", agg.GetSeq()), slog.Int("version", agg.GetVersion()))
+			log.Debug(
+				"snapshot applied",
+				slog.Uint64("seq", agg.GetSeq()),
+				agg.GetVersion().SlogAttr(),
+			)
 		}
 	}
 
@@ -123,7 +127,7 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 			slog.String("type", aggType),
 			slog.String("id", aggID),
 			slog.Uint64("seq", curSeq),
-			slog.Int("version", curVersion),
+			curVersion.SlogAttr(),
 		),
 	)
 
@@ -131,7 +135,7 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		"load",
 		slog.Group("opts",
 			slog.Uint64("min_seq", minSeq),
-			slog.Int("min_version", minVersion),
+			minVersion.SlogAttrWithKey("min_version"),
 			slog.Bool("snapshot", loadOptions.snapshot),
 		),
 	)
@@ -260,7 +264,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 			slog.String("id", aggID),
 			slog.String("type", aggType),
 			slog.Uint64("seq", agg.GetSeq()),
-			slog.Int("version", agg.GetVersion()),
+			agg.GetVersion().SlogAttr(),
 		),
 		slog.Any("opts", saveOptions),
 		slog.Int("num_events", len(newEnvs)),

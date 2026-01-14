@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/codewandler/clstr-go/core/es/envelope"
+	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
@@ -148,7 +149,7 @@ func (s *InMemoryStore) Append(
 	_ context.Context,
 	aggType string,
 	aggID string,
-	expectVersion int,
+	expectVersion types.Version,
 	events []envelope.Envelope,
 ) (*StoreAppendResult, error) {
 	if len(events) == 0 {
@@ -161,7 +162,7 @@ func (s *InMemoryStore) Append(
 	var (
 		sk         = s.streamKey(aggType, aggID)
 		curStream  = s.streams[sk]
-		curVersion = 0
+		curVersion = types.Version(0)
 	)
 
 	if len(curStream) > 0 {
