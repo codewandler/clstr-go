@@ -49,12 +49,12 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 		sub.Cancel()
 	})
 
-	fmt.Printf("SUBSCRIBE %+v\n", options)
-
 	//
 	if options.deliverPolicy == DeliverAllPolicy {
 		for k, _ := range s.streams {
 			go func(k string) {
+				s.mu.Lock()
+				defer s.mu.Unlock()
 				for _, e := range s.streams[k] {
 
 					if e.Seq < options.startSequence {

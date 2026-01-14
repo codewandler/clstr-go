@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
-	"github.com/stretchr/testify/require"
 )
 
 type myTestProjectionState struct {
@@ -49,6 +50,7 @@ func TestProjection(t *testing.T) {
 		aggID         = "my-agg-1"
 		mySnapshotter = es.NewInMemorySnapshotter(slog.Default())
 		myStore       = es.NewInMemoryStore()
+		myCP          = es.NewInMemoryCpStore()
 	)
 
 	p := createTestProjection(t, mySnapshotter)
@@ -57,6 +59,7 @@ func TestProjection(t *testing.T) {
 		es.WithAggregates(new(domain.TestAgg)),
 		es.WithProjections(p),
 		es.WithStore(myStore),
+		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
 	)
 
@@ -77,6 +80,7 @@ func TestProjection(t *testing.T) {
 		es.WithAggregates(new(domain.TestAgg)),
 		es.WithProjections(p),
 		es.WithStore(myStore),
+		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
 	)
 	repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())

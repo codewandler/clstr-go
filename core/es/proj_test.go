@@ -50,8 +50,8 @@ func TestProjection_InMemory(t *testing.T) {
 	require.NotNil(t, p)
 
 	require.NoError(t, p.Handle(t.Context(), Envelope{Type: "foo"}, 5))
-	require.Equal(t, 6, p.handler.Counter)
+	require.Equal(t, 6, p.State().Counter)
 
 	p2 := newP()
-	require.Equal(t, 6, p2.handler.Counter)
+	require.Equal(t, 6, p2.State().Counter)
 }

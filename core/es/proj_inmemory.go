@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
@@ -18,6 +19,7 @@ type InMemoryProjectionState interface {
 
 type InMemoryProjection[T InMemoryProjectionState] struct {
 	name        string
+	mu          sync.RWMutex
 	log         *slog.Logger
 	state       T
 	snapshotter Snapshotter
@@ -26,13 +28,21 @@ type InMemoryProjection[T InMemoryProjectionState] struct {
 
 func (i *InMemoryProjection[T]) Name() string     { return i.name }
 func (i *InMemoryProjection[T]) Version() Version { return i.version }
-func (i *InMemoryProjection[T]) State() T         { return i.state }
+func (i *InMemoryProjection[T]) State() T {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.state
+}
 
 func (i *InMemoryProjection[T]) Handle(ctx context.Context, env Envelope, event any) error {
 	i.log.Debug("projection event", slog.Any("event", event))
 
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
 	updated, err := i.state.Apply(ctx, env, event)
 	if err != nil {
+
 		return err
 	}
 
