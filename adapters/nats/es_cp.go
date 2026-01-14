@@ -1,8 +1,10 @@
 package nats
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/codewandler/clstr-go/core/es"
 )
@@ -33,7 +35,10 @@ func (c *CpStore) getKey(projectionName, aggKey string) string {
 }
 
 func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {
-	v, err := c.kv.Get(c.getKey(projectionName, aggKey))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	v, err := c.kv.Get(ctx, c.getKey(projectionName, aggKey))
 	if err != nil {
 		if errors.Is(err, ErrKeyNotFound) {
 			return 0, nil
@@ -44,7 +49,10 @@ func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, er
 }
 
 func (c *CpStore) Set(projectionName, aggKey string, lastVersion es.Version) error {
-	return c.kv.Set(c.getKey(projectionName, aggKey), lastVersion)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return c.kv.Set(ctx, c.getKey(projectionName, aggKey), lastVersion)
 }
 
 var _ es.CpStore = (*CpStore)(nil)
@@ -80,7 +88,10 @@ func NewSubCpStore(cfg SubCpStoreConfig) (*SubCpStore, error) {
 }
 
 func (s *SubCpStore) Get() (lastSeq uint64, err error) {
-	lastSeq, err = s.kv.Get(s.key)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	lastSeq, err = s.kv.Get(ctx, s.key)
 	if err != nil {
 		if errors.Is(err, ErrKeyNotFound) {
 			return 0, nil
@@ -90,6 +101,10 @@ func (s *SubCpStore) Get() (lastSeq uint64, err error) {
 	return lastSeq, nil
 }
 
-func (s *SubCpStore) Set(lastSeq uint64) error { return s.kv.Set(s.key, lastSeq) }
+func (s *SubCpStore) Set(lastSeq uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.kv.Set(ctx, s.key, lastSeq)
+}
 
 var _ es.SubCpStore = (*SubCpStore)(nil)

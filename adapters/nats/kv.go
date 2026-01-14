@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -61,10 +60,7 @@ func NewKvStore[T any](cfg KvConfig) (*KvStore[T], error) {
 	return &KvStore[T]{kv: kv}, nil
 }
 
-func (k *KvStore[T]) Set(key string, v T) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
+func (k *KvStore[T]) Set(ctx context.Context, key string, v T) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -77,10 +73,7 @@ func (k *KvStore[T]) Set(key string, v T) error {
 	return nil
 }
 
-func (k *KvStore[T]) Get(key string) (out T, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
+func (k *KvStore[T]) Get(ctx context.Context, key string) (out T, err error) {
 	v, err := k.kv.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {

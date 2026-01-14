@@ -17,9 +17,9 @@ func TestKV(t *testing.T) {
 		Connect: connectNats,
 	})
 	require.NoError(t, err)
-	require.NoError(t, kv.Set("apple", fooBar{Fruit: "apple", Count: 10}))
+	require.NoError(t, kv.Set(t.Context(), "apple", fooBar{Fruit: "apple", Count: 10}))
 
-	v, err := kv.Get("apple")
+	v, err := kv.Get(t.Context(), "apple")
 	require.NoError(t, err)
 	require.Equal(t, fooBar{Fruit: "apple", Count: 10}, v)
 }
