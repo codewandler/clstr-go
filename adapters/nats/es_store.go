@@ -170,7 +170,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
