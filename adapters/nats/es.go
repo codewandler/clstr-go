@@ -12,6 +12,7 @@ import (
 
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/envelope"
+	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -22,12 +23,12 @@ const (
 )
 
 type storeLoadOptions struct {
-	startVersion int
+	startVersion types.Version
 	startSeq     uint64 // startSeq is the minimum sequence to include
 }
 
-func (l *storeLoadOptions) SetStartVersion(i int) { l.startVersion = i }
-func (l *storeLoadOptions) SetStartSeq(i uint64)  { l.startSeq = i }
+func (l *storeLoadOptions) SetStartVersion(i types.Version) { l.startVersion = i }
+func (l *storeLoadOptions) SetStartSeq(i uint64)            { l.startSeq = i }
 
 type EventStoreConfig struct {
 	Connect        Connector    // Connect is used to create the underlying NATS connection. If nil, ConnectDefault() is used.
@@ -245,7 +246,7 @@ func (e *EventStore) Load(
 		"load",
 		slog.Group(
 			"opts",
-			slog.Int("start_version", startVersion),
+			startVersion.SlogAttrWithKey("start_version"),
 			slog.Uint64("start_seq", startSeq),
 		),
 	)
@@ -345,7 +346,7 @@ func (e *EventStore) Append(
 	ctx context.Context,
 	aggType string,
 	aggID string,
-	expectedVersion int,
+	expectedVersion types.Version,
 	events []envelope.Envelope,
 ) (res *es.StoreAppendResult, err error) {
 	if len(events) == 0 {
@@ -359,7 +360,7 @@ func (e *EventStore) Append(
 	}
 
 	// obtain persisted version of the aggregate
-	var version int
+	var version types.Version
 	version, err = e.getMostRecentVersionForAgg(ctx, aggType, aggID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get version: %w", err)
@@ -488,7 +489,7 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 }
 
 // getMostRecentVersionForAgg reads the last event from the store and returns its version.
-func (e *EventStore) getMostRecentVersionForAgg(ctx context.Context, aggType string, aggID string) (int, error) {
+func (e *EventStore) getMostRecentVersionForAgg(ctx context.Context, aggType string, aggID string) (types.Version, error) {
 	if lm, err := e.getMostRecentEventForAgg(ctx, aggType, aggID); err != nil {
 		return 0, err
 	} else if lm != nil {
