@@ -30,6 +30,8 @@ func (a *TestAgg) Register(r es.Registrar)            { es.RegisterEvents(r, es.
 func (a *TestAgg) Apply(event any) error {
 
 	switch e := event.(type) {
+	case *es.AggregateCreatedEvent:
+		return a.BaseAggregate.Apply(event)
 	case *Incremented:
 		a.NumTotalEvents++
 

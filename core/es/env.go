@@ -111,7 +111,7 @@ func NewEnv(opts ...EnvOption) (e *Env, err error) {
 }
 
 func (e *Env) startProjections() error {
-	e.log.Debug("env running...")
+	e.log.Debug("starting projections...")
 
 	done := make(chan struct{})
 
@@ -128,7 +128,9 @@ func (e *Env) startProjections() error {
 	}
 
 	go func(sub Subscription) {
-		defer sub.Cancel()
+		defer func() {
+			sub.Cancel()
+		}()
 
 		hdl := e.pRunner.Handler()
 

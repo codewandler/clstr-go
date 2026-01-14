@@ -9,10 +9,14 @@ import (
 )
 
 type (
+	ProjectionEventHandler interface {
+		Handle(ctx context.Context, env Envelope, event any) error
+	}
+
 	// Projection consumes persisted events to build read models / indexes.
 	Projection interface {
 		Name() string
-		Handle(ctx context.Context, env Envelope, event any) error
+		ProjectionEventHandler
 	}
 
 	Projector interface {
