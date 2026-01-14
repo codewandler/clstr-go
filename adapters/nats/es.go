@@ -368,19 +368,19 @@ func (e *EventStore) Append(
 	}
 
 	// obtain persisted version of the aggregate
-	var version es.Version
-	version, err = e.getMostRecentVersionForAgg(ctx, aggType, aggID)
+	var mostRecentAvailableVersion es.Version
+	mostRecentAvailableVersion, err = e.getMostRecentVersionForAgg(ctx, aggType, aggID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get version: %w", err)
 	}
 
 	// Optimistic check (best-effort): read current last version.
-	if version != expectedVersion {
+	if mostRecentAvailableVersion != expectedVersion {
 		return nil, fmt.Errorf(
 			"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
 			es.ErrConcurrencyConflict,
 			expectedVersion,
-			version,
+			mostRecentAvailableVersion,
 			aggType,
 			aggID,
 		)
