@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/es"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/stretchr/testify/require"
+
+	"github.com/codewandler/clstr-go/core/es"
 )
 
 func TestNats_Eventsourcing(t *testing.T) {
