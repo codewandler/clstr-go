@@ -132,8 +132,6 @@ func (e *EventStore) Close() error {
 }
 
 func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) (es.Subscription, error) {
-	// TODO: subOptions := es.NewSubscribeOpts(opts...)
-
 	options := es.NewSubscribeOpts(opts...)
 
 	var filterSubjects []string
@@ -154,10 +152,8 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 	ch := make(chan es.Envelope, 64)
 
 	consumerCfg := jetstream.ConsumerConfig{
-		// TODO: should probably be durable
-		DeliverPolicy: jetstream.DeliverNewPolicy,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		// TODO: FilterSubjects
+		DeliverPolicy:     jetstream.DeliverNewPolicy,
+		AckPolicy:         jetstream.AckExplicitPolicy,
 		FilterSubjects:    filterSubjects,
 		InactiveThreshold: 10 * time.Minute,
 	}
@@ -172,14 +168,20 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	e.log.Info("subscribe", slog.Any("config", filterSubjects))
 
-	// TODO: support advanced options
-	// We currently ignore advanced options and default to DeliverNew on the ES stream.
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	cc, err := consumer.Consume(func(msg jetstream.Msg) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		if err := msg.Ack(); err != nil {
 			e.log.Error("es: failed to ack message", slog.Any("error", err))
 			return
@@ -191,25 +193,30 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 			return
 		}
 
-		ch <- *ev
+		select {
+		case ch <- *ev:
+		case <-ctx.Done():
+		}
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
-	closeOnce := sync.Once{}
-	cancel := func() {
-		cc.Drain()
-		closeOnce.Do(func() {
+	stopOnce := sync.Once{}
+	stop := func() {
+		stopOnce.Do(func() {
+			cc.Drain()
+			cancel()
 			close(ch)
 		})
 	}
 
 	context.AfterFunc(ctx, func() {
-		cancel()
+		stop()
 	})
 
-	return &jsStoreSubscription{ch: ch, cancel: cancel}, nil
+	return &jsStoreSubscription{ch: ch, cancel: stop}, nil
 }
 
 func (e *EventStore) Load(
