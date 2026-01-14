@@ -32,8 +32,8 @@ func (l *storeLoadOptions) SetStartSeq(i uint64)         { l.startSeq = i }
 type EventStoreConfig struct {
 	Connect        Connector    // Connect is used to create the underlying NATS connection. If nil, ConnectDefault() is used.
 	Log            *slog.Logger // Log for diagnostics (optional)
-	SubjectPrefix  string
-	StreamSubjects []string
+	SubjectPrefix  string       // SubjectPrefix is the prefix used to store events
+	StreamSubjects []string     // StreamSubjects is the list of subjects the stream is fed with
 	StreamName     string
 	RenameType     func(string) string
 }
@@ -82,7 +82,7 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 	streamSubjects := cfg.StreamSubjects
 	if streamSubjects == nil || len(streamSubjects) == 0 {
-		streamSubjects = []string{fmt.Sprintf("%s.>", subjectPrefix)}
+		return nil, errors.New("stream subjects are required")
 	}
 
 	log = log.With(

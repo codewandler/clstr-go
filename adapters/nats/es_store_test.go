@@ -1,7 +1,6 @@
 package nats
 
 import (
-	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -17,11 +16,17 @@ func TestNats_Eventsourcing(t *testing.T) {
 
 	connectNatsC := NewTestContainer(t)
 	store, err := NewEventStore(EventStoreConfig{
-		Connect: connectNatsC,
-		Log:     slog.Default(),
+		Connect:       connectNatsC,
+		Log:           slog.Default(),
+		SubjectPrefix: "foo.tenant-1",
+		StreamSubjects: []string{
+			"foo.>",
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, store)
+
+	require.Equal(t, "foo.tenant-1.test.1234", store.subjectForAggregate("test", "1234"))
 
 	t.Run("stream info", func(t *testing.T) {
 		si, err := store.stream.Info(t.Context())
@@ -29,7 +34,7 @@ func TestNats_Eventsourcing(t *testing.T) {
 		require.NotNil(t, si)
 		require.Equal(t, "CLSTR_ES", si.Config.Name)
 		require.Equal(t, uint64(1), si.Config.FirstSeq)
-		require.Equal(t, []string{fmt.Sprintf("%s.>", defaultSubjectPrefix)}, si.Config.Subjects)
+		require.Equal(t, []string{"foo.>"}, si.Config.Subjects)
 	})
 
 	t.Run("end state", func(t *testing.T) {

@@ -20,6 +20,11 @@ type testCase struct {
 }
 
 func getStoreSUTs(t *testing.T) []testCase {
+	var (
+		streamSubjects = []string{"clstr.es.>"}
+		subjectPrefix  = "clstr.es.tenant-1"
+	)
+
 	return []testCase{
 		{
 			name:        "1. ALL memory",
@@ -29,8 +34,10 @@ func getStoreSUTs(t *testing.T) []testCase {
 		func() testCase {
 			connectNatsC := nats.NewTestContainer(t)
 			natsES, err := nats.NewEventStore(nats.EventStoreConfig{
-				Log:     slog.Default(),
-				Connect: connectNatsC,
+				Log:            slog.Default(),
+				Connect:        connectNatsC,
+				StreamSubjects: streamSubjects,
+				SubjectPrefix:  subjectPrefix,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, natsES)
@@ -51,8 +58,10 @@ func getStoreSUTs(t *testing.T) []testCase {
 		func() testCase {
 			connectNatsC := nats.NewTestContainer(t)
 			natsES, err := nats.NewEventStore(nats.EventStoreConfig{
-				Log:     slog.Default(),
-				Connect: connectNatsC,
+				Log:            slog.Default(),
+				Connect:        connectNatsC,
+				StreamSubjects: streamSubjects,
+				SubjectPrefix:  subjectPrefix,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, natsES)
