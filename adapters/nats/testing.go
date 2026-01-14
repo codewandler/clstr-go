@@ -25,5 +25,5 @@ func NewTestContainer(t *testing.T) Connector {
 	ip, err := natsC.ContainerIP(t.Context())
 	require.NoError(t, err)
 	t.Logf("nats ip: %s", ip)
-	return ReuseConnection(ConnectURL("nats://" + ip + ":4222"))
+	return ConnectURL("nats://" + ip + ":4222")
 }
