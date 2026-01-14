@@ -239,7 +239,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 		expectVersion,
 		newEnvs,
 	); err != nil {
-		return err
+		return fmt.Errorf("failed to save agg_type=%s agg_id=%s: %w", aggType, aggID, err)
 	} else if res != nil {
 		agg.setSeq(res.LastSeq)
 	} else {

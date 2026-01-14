@@ -376,7 +376,14 @@ func (e *EventStore) Append(
 
 	// Optimistic check (best-effort): read current last version.
 	if version != expectedVersion {
-		return nil, fmt.Errorf("%w: expected version %d, got %d (%s %s)", es.ErrConcurrencyConflict, expectedVersion, version, aggType, aggID)
+		return nil, fmt.Errorf(
+			"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
+			es.ErrConcurrencyConflict,
+			expectedVersion,
+			version,
+			aggType,
+			aggID,
+		)
 	}
 
 	// append events
@@ -420,26 +427,6 @@ func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Env
 	if err != nil {
 		return 0, fmt.Errorf("failed to append to subject %s %s: %w", subject, ev.Type, err)
 	}
-
-	/*e.log.Debug(
-		"append",
-		slog.Group(
-			"event",
-			slog.String("id", ev.ID),
-			slog.String("type", ev.Type),
-			slog.Int("version", ev.Version),
-			slog.String("aggregate_type", aggregateType),
-			slog.String("aggregate_id", ev.AggregateID),
-		),
-		slog.String("subject", subject),
-		slog.Group(
-			"ack",
-			slog.Int64("seq", int64(ack.Sequence)),
-			slog.String("stream", ack.Stream),
-			slog.Bool("dup", ack.Duplicate),
-		),
-		slog.Duration("took", time.Since(appendAt)),
-	)*/
 
 	return ack.Sequence, nil
 }
