@@ -2,6 +2,7 @@ package nats
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/codewandler/clstr-go/core/es"
@@ -22,6 +23,13 @@ func (s *Snapshotter) SaveSnapshot(ctx context.Context, snapshot *es.Snapshot) e
 func (s *Snapshotter) LoadSnapshot(ctx context.Context, objType, objID string) (*es.Snapshot, error) {
 	ss, err := s.kv.Get(ctx, s.getKey(&es.Snapshot{ObjType: objType, ObjID: objID}))
 	if err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return nil, es.ErrSnapshotNotFound
+		}
+		err = fmt.Errorf(
+			"failed to load snapshot for %s-%s: %w",
+			objType, objID, err,
+		)
 		return nil, err
 	}
 	return &ss, nil
