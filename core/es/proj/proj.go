@@ -22,18 +22,18 @@ type (
 )
 
 type projector struct {
-	log        *slog.Logger
-	checkpoint CheckpointStore
+	log     *slog.Logger
+	cpStore CpStore
 }
 
-func NewProjector(log *slog.Logger, cp CheckpointStore) Projector {
-	return &projector{log: log, checkpoint: cp}
+func NewProjector(log *slog.Logger, cpStore CpStore) Projector {
+	return &projector{log: log, cpStore: cpStore}
 }
 
 func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Envelope, ev any) error {
 	name := p.Name()
 
-	log := dp.log.With(
+	/*log := dp.log.With(
 		slog.String("projection", p.Name()),
 		slog.Group("event",
 			slog.String("aggregate_id", env.AggregateID),
@@ -42,12 +42,12 @@ func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Env
 		),
 		slog.String("go_type", fmt.Sprintf("%T", ev)),
 		slog.Any("event", ev),
-	)
+	)*/
 
 	// Idempotency check per projection + aggregate stream.
-	last, ok := dp.checkpoint.Get(name, env.AggregateID)
+	aggKey := fmt.Sprintf("%s:%s", env.AggregateType, env.AggregateID)
+	last, ok := dp.cpStore.Get(name, aggKey)
 	if ok && env.Version <= last {
-		log.Warn("skipping projection", slog.Int("last_version", last), slog.Int("current_version", env.Version))
 		return nil
 	}
 
@@ -55,7 +55,7 @@ func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Env
 		return fmt.Errorf("projection %s failed to handle envelope=%+v evt=%+v: %w", name, env, ev, err)
 	}
 
-	dp.checkpoint.Set(name, env.AggregateID, env.Version)
+	dp.cpStore.Set(name, aggKey, env.Version)
 
 	return nil
 }
@@ -67,21 +67,25 @@ type ProjectionRunner struct {
 	decoder     envelope.Decoder
 	projections []Projection
 	projector   Projector
-	subs        map[string][]string
+	scp         SubCpStore
 }
 
 func NewProjectionRunner(
 	log *slog.Logger,
 	decoder envelope.Decoder,
-	cp CheckpointStore,
+	scp SubCpStore,
+	cp CpStore,
 ) *ProjectionRunner {
 	return &ProjectionRunner{
 		log:         log,
 		decoder:     decoder,
 		projector:   NewProjector(log, cp),
 		projections: make([]Projection, 0),
+		scp:         scp,
 	}
 }
+
+func (r *ProjectionRunner) GetStartSeq() (uint64, error) { return r.scp.Get() }
 
 func (r *ProjectionRunner) Register(p Projection) {
 	r.mu.Lock()
@@ -104,18 +108,28 @@ func (r *ProjectionRunner) Handler() Handler {
 			return nil
 		}
 
+		var lastSeq uint64
+
 		for _, ev := range envelopes {
 			evt, err := r.decoder.Decode(ev)
 			if err != nil {
-				return err
+				r.log.Error("failed to decode", slog.Any("error", err))
+				continue
 			}
 
+			// TODO: concurrency control
 			for _, p := range projections {
-
 				if err := r.projector.Project(ctx, p, ev, evt); err != nil {
-					return fmt.Errorf("projection handler failed: %w", err)
+					r.log.Error("projection failed", slog.String("projection", p.Name()), slog.Any("error", err))
+					continue
 				}
 			}
+
+			lastSeq = ev.Seq
+		}
+
+		if err := r.scp.Set(lastSeq); err != nil {
+			return fmt.Errorf("failed to set checkpoint: %w", err)
 		}
 		return nil
 	}

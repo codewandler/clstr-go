@@ -14,21 +14,23 @@ type EnvOption interface {
 }
 
 type envOptions struct {
-	ctx             context.Context
-	log             *slog.Logger
-	snapshotter     Snapshotter
-	checkpointStore proj.CheckpointStore
-	store           EventStore
-	events          []EventRegisterOption
-	projections     []proj.Projection
-	aggregates      []Aggregate
+	ctx         context.Context
+	log         *slog.Logger
+	snapshotter Snapshotter
+	cpStore     proj.CpStore
+	subCpStore  proj.SubCpStore
+	store       EventStore
+	events      []EventRegisterOption
+	projections []proj.Projection
+	aggregates  []Aggregate
 }
 
 func newEnvOptions(opts ...EnvOption) envOptions {
 	options := envOptions{
-		ctx:             context.Background(),
-		store:           NewInMemoryStore(),
-		checkpointStore: proj.NewInMemoryCheckpointStore(),
+		ctx:        context.Background(),
+		store:      NewInMemoryStore(),
+		cpStore:    proj.NewInMemoryCpStore(),
+		subCpStore: proj.NewInMemorySubCpStore(),
 	}
 	for _, opt := range opts {
 		opt.applyToEnv(&options)
@@ -37,29 +39,31 @@ func newEnvOptions(opts ...EnvOption) envOptions {
 }
 
 type Env struct {
-	ctx             context.Context
-	log             *slog.Logger
-	store           EventStore
-	checkpointStore proj.CheckpointStore
-	snapshotter     Snapshotter
-	registry        *EventRegistry
-	pRunner         *proj.ProjectionRunner
-	repo            Repository
+	ctx         context.Context
+	log         *slog.Logger
+	store       EventStore
+	cpStore     proj.CpStore
+	subCpStore  proj.SubCpStore
+	snapshotter Snapshotter
+	registry    *EventRegistry
+	pRunner     *proj.ProjectionRunner
+	repo        Repository
 }
 
 func (e *Env) Repository() Repository   { return e.repo }
 func (e *Env) Store() EventStore        { return e.store }
 func (e *Env) Snapshotter() Snapshotter { return e.snapshotter }
 
-func NewEnv(opts ...EnvOption) *Env {
+func NewEnv(opts ...EnvOption) (e *Env, err error) {
 	options := newEnvOptions(opts...)
-	e := &Env{
-		ctx:             options.ctx,
-		log:             options.log,
-		store:           options.store,
-		checkpointStore: options.checkpointStore,
-		snapshotter:     options.snapshotter,
-		registry:        NewRegistry(),
+	e = &Env{
+		ctx:         options.ctx,
+		log:         options.log,
+		store:       options.store,
+		cpStore:     options.cpStore,
+		subCpStore:  options.subCpStore,
+		snapshotter: options.snapshotter,
+		registry:    NewRegistry(),
 	}
 
 	if e.log == nil {
@@ -83,7 +87,12 @@ func NewEnv(opts ...EnvOption) *Env {
 	}
 
 	// register projections
-	e.pRunner = proj.NewProjectionRunner(e.log, e.registry, e.checkpointStore)
+	e.pRunner = proj.NewProjectionRunner(
+		e.log,
+		e.registry,
+		e.subCpStore,
+		e.cpStore,
+	)
 	for _, p := range options.projections {
 		e.pRunner.Register(p)
 	}
@@ -96,21 +105,32 @@ func NewEnv(opts ...EnvOption) *Env {
 		WithSnapshotter(e.snapshotter),
 	)
 
-	e.startProjections(e.ctx)
+	err = e.startProjections()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start projections: %w", err)
+	}
 
-	return e
+	return e, nil
 }
 
-func (e *Env) startProjections(ctx context.Context) {
+func (e *Env) startProjections() error {
 	e.log.Debug("env running...")
 
 	done := make(chan struct{})
 
-	go func() {
-		sub, err := e.store.Subscribe(ctx, WithDeliverPolicy(DeliverAllPolicy))
-		if err != nil {
-			e.log.Error("failed to subscribe to events", "err", err)
-		}
+	var startSeq uint64
+	var err error
+	startSeq, err = e.pRunner.GetStartSeq()
+	if err != nil {
+		return fmt.Errorf("failed to get subscription start sequence")
+	}
+
+	sub, err := e.store.Subscribe(e.ctx, WithDeliverPolicy(DeliverAllPolicy), WithStartSequence(startSeq))
+	if err != nil {
+		e.log.Error("failed to subscribe to events", "err", err)
+	}
+
+	go func(sub Subscription) {
 		defer sub.Cancel()
 
 		hdl := e.pRunner.Handler()
@@ -119,17 +139,19 @@ func (e *Env) startProjections(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-e.ctx.Done():
 				return
 			case ev := <-sub.Chan():
-				err := hdl(ctx, []envelope.Envelope{ev})
+				err := hdl(e.ctx, []envelope.Envelope{ev})
 				if err != nil {
 					e.log.Error("projection handler failed", "err", err)
 				}
 			}
 		}
-	}()
+	}(sub)
 
 	<-done
+
+	return nil
 
 }

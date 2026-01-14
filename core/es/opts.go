@@ -9,12 +9,13 @@ import (
 )
 
 type (
-	valueOption[T any]    struct{ v T }
-	StoreOption           valueOption[EventStore]
-	CheckpointStoreOption valueOption[proj.CheckpointStore]
-	ContextOption         struct{ ctx context.Context }
-	MemoryOption          struct{}
-	EventRegisterOption   struct {
+	valueOption[T any]  struct{ v T }
+	StoreOption         valueOption[EventStore]
+	CpStoreOption       valueOption[proj.CpStore]
+	SubCPStoreOption    valueOption[proj.SubCpStore]
+	ContextOption       struct{ ctx context.Context }
+	MemoryOption        struct{}
+	EventRegisterOption struct {
 		t    string
 		ctor func() any
 	}
@@ -33,13 +34,12 @@ type (
 	SnapshotOption     valueOption[bool]
 )
 
-func WithInMemory() MemoryOption                      { return MemoryOption{} }
-func WithStore(s EventStore) StoreOption              { return StoreOption{v: s} }
-func WithSnapshotter(s Snapshotter) SnapshotterOption { return SnapshotterOption{v: s} }
-func WithSnapshot(b bool) SnapshotOption              { return SnapshotOption{v: b} }
-func WithCheckpointStore(cps proj.CheckpointStore) CheckpointStoreOption {
-	return CheckpointStoreOption{v: cps}
-}
+func WithInMemory() MemoryOption                                  { return MemoryOption{} }
+func WithStore(s EventStore) StoreOption                          { return StoreOption{v: s} }
+func WithSnapshotter(s Snapshotter) SnapshotterOption             { return SnapshotterOption{v: s} }
+func WithSnapshot(b bool) SnapshotOption                          { return SnapshotOption{v: b} }
+func WithCheckpointStore(cps proj.CpStore) CpStoreOption          { return CpStoreOption{v: cps} }
+func WithSubCheckpointStore(cps proj.SubCpStore) SubCPStoreOption { return SubCPStoreOption{v: cps} }
 func WithEvent[T any]() EventRegisterOption {
 	t := reflector.TypeInfoFor[T]().Name
 	return EventRegisterOption{t: t, ctor: func() any { return any(new(T)) }}
@@ -52,11 +52,12 @@ func WithEnvOpts(opts ...EnvOption) EnvOpts                   { return EnvOpts{o
 
 //func WithOpts[T any](opts ...T) MultiOption[T]           { return MultiOption[T]{opts: opts} }
 
-func (o StoreOption) applyToEnv(e *envOptions)           { e.store = o.v }
-func (o CheckpointStoreOption) applyToEnv(e *envOptions) { e.checkpointStore = o.v }
+func (o StoreOption) applyToEnv(e *envOptions)      { e.store = o.v }
+func (o CpStoreOption) applyToEnv(e *envOptions)    { e.cpStore = o.v }
+func (o SubCPStoreOption) applyToEnv(e *envOptions) { e.subCpStore = o.v }
 func (o MemoryOption) applyToEnv(e *envOptions) {
 	e.store = NewInMemoryStore()
-	e.checkpointStore = proj.NewInMemoryCheckpointStore()
+	e.cpStore = proj.NewInMemoryCpStore()
 }
 func (o EventRegisterOption) applyToEnv(e *envOptions) {
 	e.events = append(e.events, o)

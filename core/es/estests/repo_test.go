@@ -25,7 +25,7 @@ func TestRepository_Typed_notFound(t *testing.T) {
 
 func TestRepository_Typed(t *testing.T) {
 	var (
-		e    = es.NewEnv(es.WithAggregates(new(domain.TestAgg)))
+		e    = es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 		repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), e.Repository())
 	)
 

@@ -3,22 +3,49 @@ package proj
 import "sync"
 
 type (
-	CheckpointStore interface {
-		Get(projectionName, aggregateID string) (lastVersion int, ok bool)
-		Set(projectionName, aggregateID string, lastVersion int)
+	SubCpStore interface {
+		Get() (lastSeq uint64, err error)
+		Set(lastSeq uint64) error
+	}
+
+	CpStore interface {
+		Get(projectionName, aggKey string) (lastVersion int, ok bool)
+		Set(projectionName, aggKey string, lastVersion int)
 	}
 )
 
-type InMemoryCheckpointStore struct {
+type InMemorySubCpStore struct {
+	mu sync.RWMutex
+	v  uint64
+}
+
+func NewInMemorySubCpStore() *InMemorySubCpStore {
+	return &InMemorySubCpStore{}
+}
+
+func (s *InMemorySubCpStore) Get() (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.v, nil
+}
+
+func (s *InMemorySubCpStore) Set(v uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.v = v
+	return nil
+}
+
+type InMemoryCpStore struct {
 	mu sync.RWMutex
 	m  map[string]map[string]int // proj -> aggID -> version
 }
 
-func NewInMemoryCheckpointStore() *InMemoryCheckpointStore {
-	return &InMemoryCheckpointStore{m: map[string]map[string]int{}}
+func NewInMemoryCpStore() *InMemoryCpStore {
+	return &InMemoryCpStore{m: map[string]map[string]int{}}
 }
 
-func (s *InMemoryCheckpointStore) Get(proj, aggID string) (int, bool) {
+func (s *InMemoryCpStore) Get(proj, aggID string) (int, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pm, ok := s.m[proj]
@@ -29,7 +56,7 @@ func (s *InMemoryCheckpointStore) Get(proj, aggID string) (int, bool) {
 	return v, ok
 }
 
-func (s *InMemoryCheckpointStore) Set(proj, aggID string, v int) {
+func (s *InMemoryCpStore) Set(proj, aggID string, v int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pm, ok := s.m[proj]
