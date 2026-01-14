@@ -3,9 +3,6 @@ package es
 import (
 	"context"
 	"errors"
-
-	"github.com/codewandler/clstr-go/core/es/envelope"
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 var (
@@ -13,16 +10,16 @@ var (
 )
 
 type (
-	startVersionOption valueOption[types.Version]
+	startVersionOption valueOption[Version]
 	startSeqOption     valueOption[uint64]
 
 	eventStoreLoadOptions struct {
-		startVersion types.Version
+		startVersion Version
 		startSeq     uint64
 	}
 
 	storeLoadOptionsReceiver interface {
-		SetStartVersion(types.Version)
+		SetStartVersion(Version)
 		SetStartSeq(uint64)
 	}
 
@@ -31,9 +28,9 @@ type (
 	}
 )
 
-func (e *eventStoreLoadOptions) SetStartVersion(v types.Version) { e.startVersion = v }
-func (e *eventStoreLoadOptions) SetStartSeq(seq uint64)          { e.startSeq = seq }
-func WithStartAtVersion(startVersion types.Version) StoreLoadOption {
+func (e *eventStoreLoadOptions) SetStartVersion(v Version) { e.startVersion = v }
+func (e *eventStoreLoadOptions) SetStartSeq(seq uint64)    { e.startSeq = seq }
+func WithStartAtVersion(startVersion Version) StoreLoadOption {
 	return startVersionOption{startVersion}
 }
 func WithStartAtSeq(startSeq uint64) StoreLoadOption { return startSeqOption{startSeq} }
@@ -52,7 +49,7 @@ type (
 
 	EventStore interface {
 		Stream
-		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]envelope.Envelope, error)
-		Append(ctx context.Context, aggType string, aggID string, expectedVersion types.Version, events []envelope.Envelope) (*StoreAppendResult, error)
+		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
+		Append(ctx context.Context, aggType string, aggID string, expectedVersion Version, events []Envelope) (*StoreAppendResult, error)
 	}
 )

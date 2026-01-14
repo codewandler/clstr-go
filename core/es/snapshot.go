@@ -10,8 +10,6 @@ import (
 	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
-
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 var (
@@ -23,9 +21,9 @@ type (
 	Snapshot struct {
 		SnapshotID string `json:"snapshot_id"` // SnapshotID is the unique ID of the snapshot
 
-		ObjID      string        `json:"obj_id"`      // ObjectID is the ID of the object that was snapshotted
-		ObjType    string        `json:"obj_type"`    // ObjectType is the type of the object that was snapshotted
-		ObjVersion types.Version `json:"obj_version"` // Version is the version of the object at the time of snapshot
+		ObjID      string  `json:"obj_id"`      // ObjectID is the ID of the object that was snapshotted
+		ObjType    string  `json:"obj_type"`    // ObjectType is the type of the object that was snapshotted
+		ObjVersion Version `json:"obj_version"` // Version is the version of the object at the time of snapshot
 
 		StreamSeq uint64 `json:"stream_seq"` // StreamSeq is the global sequence number from the store
 

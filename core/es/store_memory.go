@@ -8,9 +8,6 @@ import (
 	"sync/atomic"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
-
-	"github.com/codewandler/clstr-go/core/es/envelope"
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 // InMemoryStore is a simple, correct (optimistic) store for tests/dev.
@@ -18,7 +15,7 @@ type InMemoryStore struct {
 	mu      sync.Mutex
 	log     *slog.Logger
 	seq     atomic.Uint64
-	streams map[string][]envelope.Envelope
+	streams map[string][]Envelope
 	subs    map[string]*inMemorySubscription
 }
 
@@ -39,7 +36,7 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 	subID := gonanoid.Must()
 	sub := &inMemorySubscription{
 		filters: options.filters,
-		ch:      make(chan envelope.Envelope, 1),
+		ch:      make(chan Envelope, 1),
 		cancel: func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -78,7 +75,7 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 	return sub, nil
 }
 
-func (s *InMemoryStore) dispatch(events []envelope.Envelope) {
+func (s *InMemoryStore) dispatch(events []Envelope) {
 	if len(s.subs) == 0 {
 		return
 	}
@@ -101,7 +98,7 @@ func (s *InMemoryStore) dispatch(events []envelope.Envelope) {
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		log:     slog.Default().With(slog.String("store", "memory")),
-		streams: map[string][]envelope.Envelope{},
+		streams: map[string][]Envelope{},
 		subs:    map[string]*inMemorySubscription{},
 	}
 }
@@ -115,7 +112,7 @@ func (s *InMemoryStore) Load(
 	aggType,
 	aggID string,
 	opts ...StoreLoadOption,
-) ([]envelope.Envelope, error) {
+) ([]Envelope, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -132,7 +129,7 @@ func (s *InMemoryStore) Load(
 		return nil, ErrAggregateNotFound
 	}
 
-	out := make([]envelope.Envelope, 0)
+	out := make([]Envelope, 0)
 	for _, e := range events {
 		if e.Version < loadOpts.startVersion {
 			continue
@@ -150,8 +147,8 @@ func (s *InMemoryStore) Append(
 	_ context.Context,
 	aggType string,
 	aggID string,
-	expectVersion types.Version,
-	events []envelope.Envelope,
+	expectVersion Version,
+	events []Envelope,
 ) (*StoreAppendResult, error) {
 	if len(events) == 0 {
 		return nil, ErrStoreNoEvents
@@ -163,7 +160,7 @@ func (s *InMemoryStore) Append(
 	var (
 		sk         = s.streamKey(aggType, aggID)
 		curStream  = s.streams[sk]
-		curVersion = types.Version(0)
+		curVersion = Version(0)
 	)
 
 	if len(curStream) > 0 {
@@ -176,7 +173,7 @@ func (s *InMemoryStore) Append(
 	// add sequence number
 	var (
 		lastSeq   uint64
-		allEvents = make([]envelope.Envelope, 0)
+		allEvents = make([]Envelope, 0)
 	)
 	for _, e := range events {
 		// validate event
@@ -206,11 +203,11 @@ func (s *InMemoryStore) Append(
 
 type inMemorySubscription struct {
 	filters []SubscribeFilter
-	ch      chan envelope.Envelope
+	ch      chan Envelope
 	cancel  context.CancelFunc
 }
 
-func (i *inMemorySubscription) Chan() <-chan envelope.Envelope { return i.ch }
-func (i *inMemorySubscription) Cancel()                        { i.cancel() }
+func (i *inMemorySubscription) Chan() <-chan Envelope { return i.ch }
+func (i *inMemorySubscription) Cancel()               { i.cancel() }
 
 var _ EventStore = (*InMemoryStore)(nil)

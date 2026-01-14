@@ -2,9 +2,6 @@ package es
 
 import (
 	"context"
-
-	"github.com/codewandler/clstr-go/core/es/envelope"
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 type DeliverPolicy string
@@ -23,7 +20,7 @@ type SubscribeOpts struct {
 	deliverPolicy DeliverPolicy
 	filters       []SubscribeFilter
 	startSequence uint64
-	startVersion  types.Version
+	startVersion  Version
 }
 
 func (s *SubscribeOpts) DeliverPolicy() DeliverPolicy { return s.deliverPolicy }
@@ -62,14 +59,14 @@ func WithStartSequence(startSequence uint64) SubscribeOption {
 
 type Subscription interface {
 	Cancel()
-	Chan() <-chan envelope.Envelope
+	Chan() <-chan Envelope
 }
 
 type Stream interface {
 	Subscribe(ctx context.Context, opts ...SubscribeOption) (Subscription, error)
 }
 
-func matchFilters(env envelope.Envelope, filters []SubscribeFilter) bool {
+func matchFilters(env Envelope, filters []SubscribeFilter) bool {
 	for _, f := range filters {
 		if !matchFilter(env, f) {
 			return false
@@ -78,7 +75,7 @@ func matchFilters(env envelope.Envelope, filters []SubscribeFilter) bool {
 	return true
 }
 
-func matchFilter(env envelope.Envelope, filter SubscribeFilter) bool {
+func matchFilter(env Envelope, filter SubscribeFilter) bool {
 	if filter.AggregateType != "" {
 		if env.Type != filter.AggregateType {
 			return false

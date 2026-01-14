@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/codewandler/clstr-go/core/es/types"
+	"github.com/codewandler/clstr-go/core/es"
 )
 
 func TestES_Checkpoint(t *testing.T) {
@@ -42,14 +42,14 @@ func TestES_Checkpoint(t *testing.T) {
 
 		v, err := cp.Get("my_project", "blog-1234")
 		require.NoError(t, err)
-		require.Equal(t, types.Version(0), v)
+		require.Equal(t, es.Version(0), v)
 
 		err = cp.Set("my_project", "blog-1234", 123)
 		require.NoError(t, err)
 
 		v, err = cp.Get("my_project", "blog-1234")
 		require.NoError(t, err)
-		require.Equal(t, types.Version(123), v)
+		require.Equal(t, es.Version(123), v)
 	})
 
 }

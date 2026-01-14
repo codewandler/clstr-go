@@ -1,18 +1,16 @@
-package envelope
+package es
 
 import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 // Envelope is what gets persisted in the event store.
 type Envelope struct {
 	ID            string          `json:"id"`           // ID is the message ID
 	Seq           uint64          `json:"seq"`          // Seq is the global sequence number from the store
-	Version       types.Version   `json:"version"`      // 1..N, per aggregate stream
+	Version       Version         `json:"version"`      // 1..N, per aggregate stream
 	AggregateType string          `json:"aggregate"`    // AggregateType is the aggregate root type
 	AggregateID   string          `json:"aggregate_id"` // AggregateID is the aggregate root ID
 	Type          string          `json:"type"`         // Type is the type of the event

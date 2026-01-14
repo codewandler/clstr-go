@@ -4,8 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/codewandler/clstr-go/core/es/proj"
-	"github.com/codewandler/clstr-go/core/es/types"
+	"github.com/codewandler/clstr-go/core/es"
 )
 
 type CpStoreConfig struct {
@@ -14,11 +13,11 @@ type CpStoreConfig struct {
 }
 
 type CpStore struct {
-	kv *KvStore[types.Version]
+	kv *KvStore[es.Version]
 }
 
 func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
-	kv, err := NewKvStore[types.Version](KvConfig{
+	kv, err := NewKvStore[es.Version](KvConfig{
 		Bucket:  cfg.Bucket,
 		Connect: cfg.Connect,
 	})
@@ -33,7 +32,7 @@ func (c *CpStore) getKey(projectionName, aggKey string) string {
 	return "proj-" + projectionName + "-" + aggKey
 }
 
-func (c *CpStore) Get(projectionName, aggKey string) (lastVersion types.Version, err error) {
+func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {
 	v, err := c.kv.Get(c.getKey(projectionName, aggKey))
 	if err != nil {
 		if errors.Is(err, ErrKeyNotFound) {
@@ -44,11 +43,11 @@ func (c *CpStore) Get(projectionName, aggKey string) (lastVersion types.Version,
 	return v, nil
 }
 
-func (c *CpStore) Set(projectionName, aggKey string, lastVersion types.Version) error {
+func (c *CpStore) Set(projectionName, aggKey string, lastVersion es.Version) error {
 	return c.kv.Set(c.getKey(projectionName, aggKey), lastVersion)
 }
 
-var _ proj.CpStore = (*CpStore)(nil)
+var _ es.CpStore = (*CpStore)(nil)
 
 //
 
@@ -93,4 +92,4 @@ func (s *SubCpStore) Get() (lastSeq uint64, err error) {
 
 func (s *SubCpStore) Set(lastSeq uint64) error { return s.kv.Set(s.key, lastSeq) }
 
-var _ proj.SubCpStore = (*SubCpStore)(nil)
+var _ es.SubCpStore = (*SubCpStore)(nil)

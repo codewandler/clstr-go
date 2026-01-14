@@ -1,4 +1,4 @@
-package types
+package es
 
 import "log/slog"
 

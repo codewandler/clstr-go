@@ -15,8 +15,6 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/codewandler/clstr-go/core/es"
-	"github.com/codewandler/clstr-go/core/es/envelope"
-	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 const (
@@ -24,12 +22,12 @@ const (
 )
 
 type storeLoadOptions struct {
-	startVersion types.Version
+	startVersion es.Version
 	startSeq     uint64 // startSeq is the minimum sequence to include
 }
 
-func (l *storeLoadOptions) SetStartVersion(i types.Version) { l.startVersion = i }
-func (l *storeLoadOptions) SetStartSeq(i uint64)            { l.startSeq = i }
+func (l *storeLoadOptions) SetStartVersion(i es.Version) { l.startVersion = i }
+func (l *storeLoadOptions) SetStartSeq(i uint64)         { l.startSeq = i }
 
 type EventStoreConfig struct {
 	Connect        Connector    // Connect is used to create the underlying NATS connection. If nil, ConnectDefault() is used.
@@ -153,7 +151,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
-	ch := make(chan envelope.Envelope, 64)
+	ch := make(chan es.Envelope, 64)
 
 	consumerCfg := jetstream.ConsumerConfig{
 		// TODO: should probably be durable
@@ -219,7 +217,7 @@ func (e *EventStore) Load(
 	aggType string,
 	aggID string,
 	opts ...es.StoreLoadOption,
-) (loadedEvents []envelope.Envelope, err error) {
+) (loadedEvents []es.Envelope, err error) {
 	if aggType == "" {
 		return nil, errors.New("aggregate type is empty")
 	}
@@ -298,7 +296,7 @@ func (e *EventStore) Load(
 
 	var (
 		msg    jetstream.Msg
-		ev     *envelope.Envelope
+		ev     *es.Envelope
 		curSeq uint64
 	)
 	for {
@@ -349,8 +347,8 @@ func (e *EventStore) Append(
 	ctx context.Context,
 	aggType string,
 	aggID string,
-	expectedVersion types.Version,
-	events []envelope.Envelope,
+	expectedVersion es.Version,
+	events []es.Envelope,
 ) (res *es.StoreAppendResult, err error) {
 	if len(events) == 0 {
 		return nil, nil
@@ -363,7 +361,7 @@ func (e *EventStore) Append(
 	}
 
 	// obtain persisted version of the aggregate
-	var version types.Version
+	var version es.Version
 	version, err = e.getMostRecentVersionForAgg(ctx, aggType, aggID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get version: %w", err)
@@ -386,7 +384,7 @@ func (e *EventStore) Append(
 	return &es.StoreAppendResult{LastSeq: lastSeq}, nil
 }
 
-func (e *EventStore) append(ctx context.Context, aggregateType string, ev envelope.Envelope) (lastSeq uint64, err error) {
+func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Envelope) (lastSeq uint64, err error) {
 	//appendAt := time.Now()
 
 	err = ev.Validate()
@@ -455,7 +453,7 @@ func ensureStream(js jetstream.JetStream, cfg jetstream.StreamConfig) (s jetstre
 	return s, si, nil
 }
 
-func (e *EventStore) decodeMsg(msg jetstream.Msg) (env *envelope.Envelope, err error) {
+func (e *EventStore) decodeMsg(msg jetstream.Msg) (env *es.Envelope, err error) {
 	var md *jetstream.MsgMetadata
 	md, err = msg.Metadata()
 	if err != nil {
@@ -463,7 +461,7 @@ func (e *EventStore) decodeMsg(msg jetstream.Msg) (env *envelope.Envelope, err e
 	}
 
 	// Decode
-	env = &envelope.Envelope{}
+	env = &es.Envelope{}
 	err = json.Unmarshal(msg.Data(), env)
 	if err != nil {
 		return nil, err
@@ -472,7 +470,7 @@ func (e *EventStore) decodeMsg(msg jetstream.Msg) (env *envelope.Envelope, err e
 	return env, nil
 }
 
-func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggID string) (lastMsg *envelope.Envelope, err error) {
+func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggID string) (lastMsg *es.Envelope, err error) {
 	var (
 		subject = e.subjectForAggregate(aggType, aggID)
 	)
@@ -481,7 +479,7 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 			return nil, getLastErr
 		}
 	} else if lm != nil {
-		lastMsg = &envelope.Envelope{}
+		lastMsg = &es.Envelope{}
 		err = json.Unmarshal(lm.Data, lastMsg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal last message for subject %q: %w", subject, err)
@@ -492,7 +490,7 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 }
 
 // getMostRecentVersionForAgg reads the last event from the store and returns its version.
-func (e *EventStore) getMostRecentVersionForAgg(ctx context.Context, aggType string, aggID string) (types.Version, error) {
+func (e *EventStore) getMostRecentVersionForAgg(ctx context.Context, aggType string, aggID string) (es.Version, error) {
 	if lm, err := e.getMostRecentEventForAgg(ctx, aggType, aggID); err != nil {
 		return 0, err
 	} else if lm != nil {
@@ -516,9 +514,9 @@ func (e *EventStore) subjectForAggregate(aggregateType, aggregateID string) stri
 // --- Subscription ---
 
 type jsStoreSubscription struct {
-	ch     chan envelope.Envelope
+	ch     chan es.Envelope
 	cancel context.CancelFunc
 }
 
-func (s *jsStoreSubscription) Cancel()                        { s.cancel() }
-func (s *jsStoreSubscription) Chan() <-chan envelope.Envelope { return s.ch }
+func (s *jsStoreSubscription) Cancel()                  { s.cancel() }
+func (s *jsStoreSubscription) Chan() <-chan es.Envelope { return s.ch }

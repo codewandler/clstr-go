@@ -10,8 +10,6 @@ import (
 	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
-
-	"github.com/codewandler/clstr-go/core/es/envelope"
 )
 
 type (
@@ -203,7 +201,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 	}
 
 	expectVersion := agg.GetVersion()
-	newEnvs := make([]envelope.Envelope, 0)
+	newEnvs := make([]Envelope, 0)
 	v := expectVersion
 
 	for _, ev := range uncommitted {
@@ -214,7 +212,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 
 		v++
 
-		env := envelope.Envelope{
+		env := Envelope{
 			// TODO: allow ID generator
 			ID:            gonanoid.Must(),
 			Type:          getEventTypeOf(ev),

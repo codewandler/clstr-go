@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/internal/reflector"
 )
 
@@ -25,7 +24,7 @@ func (r *EventRegistry) Register(eventType string, ctor func() any) {
 	r.news[eventType] = ctor
 }
 
-func (r *EventRegistry) Decode(env envelope.Envelope) (any, error) {
+func (r *EventRegistry) Decode(env Envelope) (any, error) {
 	r.mu.RLock()
 	ctor, ok := r.news[env.Type]
 	r.mu.RUnlock()

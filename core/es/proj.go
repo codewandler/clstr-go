@@ -1,4 +1,4 @@
-package proj
+package es
 
 import (
 	"context"
@@ -6,19 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-
-	"github.com/codewandler/clstr-go/core/es/envelope"
 )
 
 type (
 	// Projection consumes persisted events to build read models / indexes.
 	Projection interface {
 		Name() string
-		Handle(ctx context.Context, env envelope.Envelope, event any) error
+		Handle(ctx context.Context, env Envelope, event any) error
 	}
 
 	Projector interface {
-		Project(ctx context.Context, p Projection, env envelope.Envelope, event any) error
+		Project(ctx context.Context, p Projection, env Envelope, event any) error
 	}
 )
 
@@ -31,7 +29,7 @@ func NewProjector(log *slog.Logger, cpStore CpStore) Projector {
 	return &projector{log: log, cpStore: cpStore}
 }
 
-func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Envelope, ev any) error {
+func (dp *projector) Project(ctx context.Context, p Projection, env Envelope, ev any) error {
 	name := p.Name()
 
 	/*log := dp.log.With(
@@ -70,7 +68,7 @@ func (dp *projector) Project(ctx context.Context, p Projection, env envelope.Env
 type ProjectionRunner struct {
 	mu          sync.RWMutex
 	log         *slog.Logger
-	decoder     envelope.Decoder
+	decoder     Decoder
 	projections []Projection
 	projector   Projector
 	scp         SubCpStore
@@ -78,7 +76,7 @@ type ProjectionRunner struct {
 
 func NewProjectionRunner(
 	log *slog.Logger,
-	decoder envelope.Decoder,
+	decoder Decoder,
 	scp SubCpStore,
 	cp CpStore,
 ) *ProjectionRunner {
@@ -100,11 +98,11 @@ func (r *ProjectionRunner) Register(p Projection) {
 	r.log.Debug("registered projection", slog.String("name", p.Name()))
 }
 
-type Handler func(ctx context.Context, envs []envelope.Envelope) error
+type Handler func(ctx context.Context, envs []Envelope) error
 
 // Handler returns a bus handler you can subscribe with.
 func (r *ProjectionRunner) Handler() Handler {
-	return func(ctx context.Context, envelopes []envelope.Envelope) error {
+	return func(ctx context.Context, envelopes []Envelope) error {
 		r.mu.RLock()
 		projections := make([]Projection, len(r.projections))
 		copy(projections, r.projections)
@@ -145,7 +143,7 @@ type debugProjection struct {
 	log *slog.Logger
 }
 
-func (dp *debugProjection) Handle(ctx context.Context, env envelope.Envelope, event any) error {
+func (dp *debugProjection) Handle(ctx context.Context, env Envelope, event any) error {
 	dp.log.Debug(
 		"projection event",
 		slog.String("kind", fmt.Sprintf("%T", event)),
