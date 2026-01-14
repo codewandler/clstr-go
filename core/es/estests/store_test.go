@@ -13,15 +13,20 @@ import (
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
 )
 
-type storeSUT struct {
-	name string
-	s    es.EventStore
+type testCase struct {
+	name        string
+	store       es.EventStore
+	snapshotter es.Snapshotter
 }
 
-func getStoreSUTs(t *testing.T) []storeSUT {
-	return []storeSUT{
-		{name: "memory", s: es.NewInMemoryStore()},
-		func() storeSUT {
+func getStoreSUTs(t *testing.T) []testCase {
+	return []testCase{
+		{
+			name:        "1. ALL memory",
+			store:       es.NewInMemoryStore(),
+			snapshotter: es.NewInMemorySnapshotter(slog.Default()),
+		},
+		func() testCase {
 			connectNatsC := nats.NewTestContainer(t)
 			natsES, err := nats.NewEventStore(nats.EventStoreConfig{
 				Log:     slog.Default(),
@@ -29,7 +34,41 @@ func getStoreSUTs(t *testing.T) []storeSUT {
 			})
 			require.NoError(t, err)
 			require.NotNil(t, natsES)
-			return storeSUT{name: "nats", s: natsES}
+
+			natsSnapshotter, err := nats.NewSnapshotter(nats.KvConfig{
+				Connect: connectNatsC,
+				Bucket:  "foobar",
+			})
+			require.NoError(t, err)
+			require.NotNil(t, natsSnapshotter)
+
+			return testCase{
+				name:        "2. ALL nats",
+				store:       natsES,
+				snapshotter: natsSnapshotter,
+			}
+		}(),
+		func() testCase {
+			connectNatsC := nats.NewTestContainer(t)
+			natsES, err := nats.NewEventStore(nats.EventStoreConfig{
+				Log:     slog.Default(),
+				Connect: connectNatsC,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, natsES)
+
+			natsSnapshotter, err := nats.NewSnapshotter(nats.KvConfig{
+				Connect: connectNatsC,
+				Bucket:  "foobar",
+			})
+			require.NoError(t, err)
+			require.NotNil(t, natsSnapshotter)
+
+			return testCase{
+				name:        "3. store=nats, snapshotter=memory",
+				store:       natsES,
+				snapshotter: es.NewInMemorySnapshotter(slog.Default()),
+			}
 		}(),
 	}
 }
@@ -39,9 +78,6 @@ type TestFunc func(t *testing.T, tef Tef)
 
 func eachStore(testFunc TestFunc) func(t *testing.T) {
 	return func(t *testing.T) {
-		//t.Parallel()
-
-		//t.Run("foo", func(t *testing.T) {})
 
 		for _, sut := range getStoreSUTs(t) {
 			sut := sut
@@ -51,9 +87,9 @@ func eachStore(testFunc TestFunc) func(t *testing.T) {
 					func(opts ...es.EnvOption) *es.TestingEnv {
 						return es.NewTestEnv(
 							t,
-							es.WithSnapshotter(es.NewInMemorySnapshotter(slog.Default())),
+							es.WithSnapshotter(sut.snapshotter),
+							es.WithStore(sut.store),
 							es.WithAggregates(new(domain.TestAgg)),
-							es.WithStore(sut.s),
 							es.WithEnvOpts(opts...),
 						)
 					},
@@ -94,12 +130,12 @@ func TestEventStore_All(t *testing.T) {
 		t.Run("mutate", func(t *testing.T) {
 			require.NoError(t, a.Inc())
 			require.Equal(t, 1, a.Count())
-			require.NoError(t, te.Repository().Save(t.Context(), a))
+			require.NoError(t, te.Repository().Save(t.Context(), a, es.WithSnapshot(true)))
 		})
 
 		t.Run("load", func(t *testing.T) {
 			loaded := domain.NewTestAgg("1000")
-			require.NoError(t, te.Repository().Load(t.Context(), loaded))
+			require.NoError(t, te.Repository().Load(t.Context(), loaded, es.WithSnapshot(true)))
 			require.Equal(t, 1, loaded.Count())
 			require.Equal(t, "1000", loaded.GetID())
 			require.Equal(t, es.Version(1), loaded.GetVersion())
@@ -121,16 +157,26 @@ func TestEventStore_All(t *testing.T) {
 
 	t.Run("snapshots", eachStore(func(t *testing.T, tef Tef) {
 		var (
-			te      = tef(es.WithSnapshotter(es.NewInMemorySnapshotter(slog.Default())))
+			te      = tef()
 			tr      = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
-			aggID   = "my-agg-1"
+			aggID   = "my-agg-" + gonanoid.Must()
 			aggType = tr.GetAggType()
 		)
 
+		t.Run("get or create", func(t *testing.T) {
+			a, err := tr.GetOrCreate(t.Context(), aggID, es.WithSnapshot(true))
+			require.NoError(t, err)
+			require.NotNil(t, a)
+			require.Equal(t, aggID, a.GetID())
+			require.Equal(t, es.Version(1), a.GetVersion())
+		})
+
 		t.Run("save agg with snapshot", func(t *testing.T) {
-			a := tr.NewWithID(aggID)
+			a, err := tr.GetByID(t.Context(), aggID)
+			require.NoError(t, err)
 			require.NoError(t, a.Inc())
 			require.NoError(t, tr.Save(t.Context(), a, es.WithSnapshot(true)))
+			require.Equal(t, es.Version(2), a.GetVersion())
 		})
 
 		t.Run("load snapshot", func(t *testing.T) {
@@ -138,17 +184,17 @@ func TestEventStore_All(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, ss)
 			require.NotEmpty(t, ss.SnapshotID)
-			require.Equal(t, uint64(1), ss.StreamSeq)
+			require.Equal(t, uint64(2), ss.StreamSeq)
 			require.Equal(t, aggID, ss.ObjID)
 			require.Equal(t, aggType, ss.ObjType)
-			require.Equal(t, es.Version(1), ss.ObjVersion)
+			require.Equal(t, es.Version(2), ss.ObjVersion)
 		})
 
 		t.Run("apply snapshot", func(t *testing.T) {
 			a := tr.NewWithID(aggID)
 			require.NoError(t, es.ApplySnapshot(t.Context(), te.Snapshotter(), a))
-			require.Equal(t, es.Version(1), a.GetVersion(), "version must be correct")
-			require.Equal(t, uint64(1), a.GetSeq(), "seq must be correct")
+			require.Equal(t, es.Version(2), a.GetVersion(), "version must be correct")
+			require.Equal(t, uint64(2), a.GetSeq(), "seq must be correct")
 			require.Equal(t, 1, a.Count(), "count must be correct")
 		})
 
@@ -156,7 +202,7 @@ func TestEventStore_All(t *testing.T) {
 			a, err := tr.GetByID(t.Context(), aggID, es.WithSnapshot(true))
 			require.NoError(t, err)
 			require.NotNil(t, a)
-			require.EqualValues(t, 1, a.GetVersion(), "version must be correct")
+			require.EqualValues(t, 2, a.GetVersion(), "version must be correct")
 			require.Equal(t, 1, a.Count(), "count must be correct")
 		})
 	}))
