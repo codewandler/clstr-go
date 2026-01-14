@@ -75,8 +75,8 @@ func TestEventStore_All(t *testing.T) {
 			"aggID",
 			0,
 			[]envelope.Envelope{
-				{ID: gonanoid.Must(), AggregateID: "1234", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
-				{ID: gonanoid.Must(), AggregateID: "1235", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
+				{ID: gonanoid.Must(), AggregateType: "test", AggregateID: "1234", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
+				{ID: gonanoid.Must(), AggregateType: "test", AggregateID: "1235", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
 			},
 		)
 		// TODO: protect against id+type missmatch

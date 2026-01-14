@@ -211,12 +211,13 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 
 		env := envelope.Envelope{
 			// TODO: allow ID generator
-			ID:          gonanoid.Must(),
-			Type:        getEventTypeOf(ev),
-			AggregateID: aggID,
-			Version:     v,
-			OccurredAt:  time.Now(),
-			Data:        data,
+			ID:            gonanoid.Must(),
+			Type:          getEventTypeOf(ev),
+			AggregateID:   aggID,
+			AggregateType: aggType,
+			Version:       v,
+			OccurredAt:    time.Now(),
+			Data:          data,
 		}
 
 		err = env.Validate()
