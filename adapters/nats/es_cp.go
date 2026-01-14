@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/codewandler/clstr-go/core/es"
@@ -31,7 +32,7 @@ func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
 }
 
 func (c *CpStore) getKey(projectionName, aggKey string) string {
-	return "proj-" + projectionName + "-" + aggKey
+	return strings.Replace("proj-"+projectionName+"-"+aggKey, ":", "-", -1)
 }
 
 func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {
