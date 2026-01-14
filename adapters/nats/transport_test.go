@@ -5,8 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/codewandler/clstr-go/core/cluster"
 	"github.com/stretchr/testify/require"
+
+	"github.com/codewandler/clstr-go/core/cluster"
 )
 
 func TestNats_Transport(t *testing.T) {

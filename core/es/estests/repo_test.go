@@ -5,9 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
-	"github.com/stretchr/testify/require"
 )
 
 func TestRepository(t *testing.T) {

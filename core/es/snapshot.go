@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+
+	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 var (

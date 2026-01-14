@@ -9,8 +9,9 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/es/envelope"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+
+	"github.com/codewandler/clstr-go/core/es/envelope"
 )
 
 type (

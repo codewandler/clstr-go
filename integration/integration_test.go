@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/core/actor/v2"
 	"github.com/codewandler/clstr-go/core/cluster"
-	"github.com/stretchr/testify/require"
 )
 
 type (

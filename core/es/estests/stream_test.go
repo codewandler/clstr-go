@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
-	"github.com/stretchr/testify/require"
 )
 
 func TestStream(t *testing.T) {

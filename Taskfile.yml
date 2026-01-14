@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  fix:
+    cmds:
+      - goimports -v -w -local "$(go list -m)" .
+
+  default:
+    cmds:
+      - task: fix

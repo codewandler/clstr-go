@@ -10,8 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/codewandler/clstr-go/core/cluster"
 	natsgo "github.com/nats-io/nats.go"
+
+	"github.com/codewandler/clstr-go/core/cluster"
 )
 
 type TransportConfig struct {

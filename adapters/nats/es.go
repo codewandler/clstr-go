@@ -10,12 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/es"
-	"github.com/codewandler/clstr-go/core/es/envelope"
-	"github.com/codewandler/clstr-go/core/es/types"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/codewandler/clstr-go/core/es"
+	"github.com/codewandler/clstr-go/core/es/envelope"
+	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 const (

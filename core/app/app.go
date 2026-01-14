@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
+
 	"github.com/codewandler/clstr-go/core/actor/v2"
 	"github.com/codewandler/clstr-go/core/cluster"
-	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type NodeConfig struct {

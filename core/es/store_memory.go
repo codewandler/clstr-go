@@ -7,9 +7,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
+
 	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/core/es/types"
-	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 // InMemoryStore is a simple, correct (optimistic) store for tests/dev.

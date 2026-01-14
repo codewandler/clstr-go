@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/adapters/nats"
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
 	"github.com/codewandler/clstr-go/core/es/types"
-	gonanoid "github.com/matoous/go-nanoid/v2"
-	"github.com/stretchr/testify/require"
 )
 
 type storeSUT struct {

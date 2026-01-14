@@ -3,8 +3,9 @@ package nats
 import (
 	"testing"
 
-	"github.com/codewandler/clstr-go/core/es/types"
 	"github.com/stretchr/testify/require"
+
+	"github.com/codewandler/clstr-go/core/es/types"
 )
 
 func TestES_Checkpoint(t *testing.T) {
