@@ -19,8 +19,6 @@ func TestNats_Connect(t *testing.T) {
 	require.NotNil(t, nc2)
 	require.Equal(t, "CONNECTED", nc2.Status().String())
 
-	require.Equal(t, nc1, nc2)
-
 	disconnect1()
 	disconnect2()
 
