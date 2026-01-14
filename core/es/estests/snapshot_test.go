@@ -6,11 +6,12 @@ import (
 	"log/slog"
 	"testing"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/stretchr/testify/require"
+
 	"github.com/codewandler/clstr-go/adapters/nats"
 	"github.com/codewandler/clstr-go/core/es"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
-	gonanoid "github.com/matoous/go-nanoid/v2"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSnapshot(t *testing.T) {
