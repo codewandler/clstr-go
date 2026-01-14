@@ -4,37 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
+	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/internal/reflector"
 )
-
-// Envelope is what gets persisted in the event store.
-type Envelope struct {
-	ID          string          `json:"id"`           // ID is the message ID
-	Seq         uint64          `json:"seq"`          // Seq is the global sequence number from the store
-	Version     int             `json:"version"`      // 1..N, per aggregate stream
-	AggregateID string          `json:"aggregate_id"` // AggregateID is the aggregate root ID
-	Type        string          `json:"type"`         // Type is the type of the event
-	OccurredAt  time.Time       `json:"occurred_at"`
-	Data        json.RawMessage `json:"data"`
-}
-
-func (e Envelope) Validate() error {
-	if e.ID == "" {
-		return fmt.Errorf("envelope id is empty")
-	}
-	if e.OccurredAt.IsZero() {
-		return fmt.Errorf("envelope occurred at is zero")
-	}
-	if e.AggregateID == "" {
-		return fmt.Errorf("envelope aggregate id is empty")
-	}
-	if e.Type == "" {
-		return fmt.Errorf("envelope type is empty")
-	}
-	return nil
-}
 
 // EventRegistry maps event type names to constructors so we can decode persisted events.
 type EventRegistry struct {
@@ -52,7 +25,7 @@ func (r *EventRegistry) Register(eventType string, ctor func() any) {
 	r.news[eventType] = ctor
 }
 
-func (r *EventRegistry) Decode(env Envelope) (any, error) {
+func (r *EventRegistry) Decode(env envelope.Envelope) (any, error) {
 	r.mu.RLock()
 	ctor, ok := r.news[env.Type]
 	r.mu.RUnlock()

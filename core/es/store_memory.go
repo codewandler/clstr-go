@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/codewandler/clstr-go/core/es/envelope"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
@@ -15,7 +16,7 @@ type InMemoryStore struct {
 	mu      sync.Mutex
 	log     *slog.Logger
 	seq     atomic.Uint64
-	streams map[string][]Envelope
+	streams map[string][]envelope.Envelope
 	subs    map[string]*inMemorySubscription
 }
 
@@ -36,7 +37,7 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 	subID := gonanoid.Must()
 	sub := &inMemorySubscription{
 		filters: options.filters,
-		ch:      make(chan Envelope, 1),
+		ch:      make(chan envelope.Envelope, 1),
 		cancel: func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -75,7 +76,7 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 	return sub, nil
 }
 
-func (s *InMemoryStore) dispatch(events []Envelope) {
+func (s *InMemoryStore) dispatch(events []envelope.Envelope) {
 	if len(s.subs) == 0 {
 		return
 	}
@@ -98,7 +99,7 @@ func (s *InMemoryStore) dispatch(events []Envelope) {
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		log:     slog.Default().With(slog.String("store", "memory")),
-		streams: map[string][]Envelope{},
+		streams: map[string][]envelope.Envelope{},
 		subs:    map[string]*inMemorySubscription{},
 	}
 }
@@ -112,7 +113,7 @@ func (s *InMemoryStore) Load(
 	aggType,
 	aggID string,
 	opts ...StoreLoadOption,
-) ([]Envelope, error) {
+) ([]envelope.Envelope, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -129,7 +130,7 @@ func (s *InMemoryStore) Load(
 		return nil, ErrAggregateNotFound
 	}
 
-	out := make([]Envelope, 0)
+	out := make([]envelope.Envelope, 0)
 	for _, e := range events {
 		if e.Version < loadOpts.startVersion {
 			continue
@@ -148,7 +149,7 @@ func (s *InMemoryStore) Append(
 	aggType string,
 	aggID string,
 	expectVersion int,
-	events []Envelope,
+	events []envelope.Envelope,
 ) (*StoreAppendResult, error) {
 	if len(events) == 0 {
 		return nil, ErrStoreNoEvents
@@ -173,7 +174,7 @@ func (s *InMemoryStore) Append(
 	// add sequence number
 	var (
 		lastSeq   uint64
-		allEvents = make([]Envelope, 0)
+		allEvents = make([]envelope.Envelope, 0)
 	)
 	for _, e := range events {
 		// validate event
@@ -203,11 +204,11 @@ func (s *InMemoryStore) Append(
 
 type inMemorySubscription struct {
 	filters []SubscribeFilter
-	ch      chan Envelope
+	ch      chan envelope.Envelope
 	cancel  context.CancelFunc
 }
 
-func (i *inMemorySubscription) Chan() <-chan Envelope { return i.ch }
-func (i *inMemorySubscription) Cancel()               { i.cancel() }
+func (i *inMemorySubscription) Chan() <-chan envelope.Envelope { return i.ch }
+func (i *inMemorySubscription) Cancel()                        { i.cancel() }
 
 var _ EventStore = (*InMemoryStore)(nil)

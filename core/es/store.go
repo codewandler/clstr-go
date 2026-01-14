@@ -3,6 +3,8 @@ package es
 import (
 	"context"
 	"errors"
+
+	"github.com/codewandler/clstr-go/core/es/envelope"
 )
 
 var (
@@ -47,7 +49,7 @@ type (
 
 	EventStore interface {
 		Stream
-		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
-		Append(ctx context.Context, aggType string, aggID string, expectedVersion int, events []Envelope) (*StoreAppendResult, error)
+		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]envelope.Envelope, error)
+		Append(ctx context.Context, aggType string, aggID string, expectedVersion int, events []envelope.Envelope) (*StoreAppendResult, error)
 	}
 )

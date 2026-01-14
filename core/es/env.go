@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/codewandler/clstr-go/core/es/envelope"
+	"github.com/codewandler/clstr-go/core/es/proj"
 )
 
 type EnvOption interface {
@@ -14,10 +17,10 @@ type envOptions struct {
 	ctx             context.Context
 	log             *slog.Logger
 	snapshotter     Snapshotter
-	checkpointStore CheckpointStore
+	checkpointStore proj.CheckpointStore
 	store           EventStore
 	events          []EventRegisterOption
-	projections     []Projection
+	projections     []proj.Projection
 	aggregates      []Aggregate
 }
 
@@ -25,7 +28,7 @@ func newEnvOptions(opts ...EnvOption) envOptions {
 	options := envOptions{
 		ctx:             context.Background(),
 		store:           NewInMemoryStore(),
-		checkpointStore: NewInMemoryCheckpointStore(),
+		checkpointStore: proj.NewInMemoryCheckpointStore(),
 	}
 	for _, opt := range opts {
 		opt.applyToEnv(&options)
@@ -37,10 +40,10 @@ type Env struct {
 	ctx             context.Context
 	log             *slog.Logger
 	store           EventStore
-	checkpointStore CheckpointStore
+	checkpointStore proj.CheckpointStore
 	snapshotter     Snapshotter
 	registry        *EventRegistry
-	pRunner         *ProjectionRunner
+	pRunner         *proj.ProjectionRunner
 	repo            Repository
 }
 
@@ -80,7 +83,7 @@ func NewEnv(opts ...EnvOption) *Env {
 	}
 
 	// register projections
-	e.pRunner = NewProjectionRunner(e.log, e.registry, e.checkpointStore)
+	e.pRunner = proj.NewProjectionRunner(e.log, e.registry, e.checkpointStore)
 	for _, p := range options.projections {
 		e.pRunner.Register(p)
 	}
@@ -119,7 +122,7 @@ func (e *Env) startProjections(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case ev := <-sub.Chan():
-				err := hdl(ctx, []Envelope{ev})
+				err := hdl(ctx, []envelope.Envelope{ev})
 				if err != nil {
 					e.log.Error("projection handler failed", "err", err)
 				}

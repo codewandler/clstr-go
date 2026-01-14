@@ -2,6 +2,8 @@ package es
 
 import (
 	"context"
+
+	"github.com/codewandler/clstr-go/core/es/envelope"
 )
 
 type DeliverPolicy string
@@ -59,14 +61,14 @@ func WithStartSequence(startSequence uint64) SubscribeOption {
 
 type Subscription interface {
 	Cancel()
-	Chan() <-chan Envelope
+	Chan() <-chan envelope.Envelope
 }
 
 type Stream interface {
 	Subscribe(ctx context.Context, opts ...SubscribeOption) (Subscription, error)
 }
 
-func matchFilters(env Envelope, filters []SubscribeFilter) bool {
+func matchFilters(env envelope.Envelope, filters []SubscribeFilter) bool {
 	for _, f := range filters {
 		if !matchFilter(env, f) {
 			return false
@@ -75,7 +77,7 @@ func matchFilters(env Envelope, filters []SubscribeFilter) bool {
 	return true
 }
 
-func matchFilter(env Envelope, filter SubscribeFilter) bool {
+func matchFilter(env envelope.Envelope, filter SubscribeFilter) bool {
 	if filter.AggregateType != "" {
 		if env.Type != filter.AggregateType {
 			return false

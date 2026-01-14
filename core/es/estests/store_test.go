@@ -7,6 +7,7 @@ import (
 
 	"github.com/codewandler/clstr-go/adapters/nats"
 	"github.com/codewandler/clstr-go/core/es"
+	"github.com/codewandler/clstr-go/core/es/envelope"
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func TestEventStore_All(t *testing.T) {
 			"aggType",
 			"aggID",
 			0,
-			[]es.Envelope{
+			[]envelope.Envelope{
 				{ID: gonanoid.Must(), AggregateID: "1234", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
 				{ID: gonanoid.Must(), AggregateID: "1235", Type: "test", Data: []byte(nil), OccurredAt: time.Now()},
 			},
