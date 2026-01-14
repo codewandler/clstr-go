@@ -16,10 +16,10 @@ func TestNats_Transport(t *testing.T) {
 	connectNatsC := NewTestContainer(t)
 
 	t.Run("connect & close", func(t *testing.T) {
-		nc, err := connectNatsC()
+		nc, disconnect, err := connectNatsC()
 		require.NoError(t, err)
 		require.NotNil(t, nc)
-		nc.Close()
+		disconnect()
 	})
 
 	t.Run("connectJetstream & close", func(t *testing.T) {

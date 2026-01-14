@@ -9,18 +9,26 @@ import (
 func TestNats_Connect(t *testing.T) {
 
 	connect := NewTestContainer(t)
-	nc1, err := connect()
+	nc1, disconnect1, err := connect()
 	require.NoError(t, err)
 	require.NotNil(t, nc1)
 	require.Equal(t, "CONNECTED", nc1.Status().String())
 
-	nc2, err := connect()
+	nc2, disconnect2, err := connect()
 	require.NoError(t, err)
 	require.NotNil(t, nc2)
 	require.Equal(t, "CONNECTED", nc2.Status().String())
 
 	require.Equal(t, nc1, nc2)
 
-	nc1.Close()
-	nc2.Close()
+	disconnect1()
+	disconnect2()
+
+	require.Equal(t, "CLOSED", nc1.Status().String())
+
+	nc3, _, err := connect()
+	require.NoError(t, err)
+	require.NotNil(t, nc3)
+	require.Equal(t, "CONNECTED", nc3.Status().String())
+
 }

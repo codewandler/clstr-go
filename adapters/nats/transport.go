@@ -22,9 +22,10 @@ type TransportConfig struct {
 }
 
 type Transport struct {
-	nc     *natsgo.Conn
-	log    *slog.Logger
-	prefix string
+	nc      *natsgo.Conn
+	closeNc closeFunc
+	log     *slog.Logger
+	prefix  string
 
 	mu   sync.Mutex
 	subs map[*natsgo.Subscription]struct{}
@@ -49,16 +50,17 @@ func NewTransport(cfg TransportConfig) (*Transport, error) {
 		log = slog.Default()
 	}
 
-	nc, err := connFn()
+	nc, closeNc, err := connFn()
 	if err != nil {
 		return nil, err
 	}
 
 	t := &Transport{
-		nc:     nc,
-		log:    log.With(slog.String("transport", "nats")),
-		prefix: cfg.SubjectPrefix,
-		subs:   make(map[*natsgo.Subscription]struct{}),
+		nc:      nc,
+		closeNc: closeNc,
+		log:     log.With(slog.String("transport", "nats")),
+		prefix:  cfg.SubjectPrefix,
+		subs:    make(map[*natsgo.Subscription]struct{}),
 	}
 
 	return t, nil
@@ -134,7 +136,7 @@ func (t *Transport) Close() error {
 	t.mu.Unlock()
 	if t.nc != nil {
 		t.nc.Drain()
-		t.nc.Close()
+		t.closeNc()
 	}
 	return nil
 }

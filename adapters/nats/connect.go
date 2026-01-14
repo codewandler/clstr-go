@@ -3,33 +3,55 @@ package nats
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
 	natsgo "github.com/nats-io/nats.go"
 )
 
-type Connector func() (*natsgo.Conn, error)
+type closeFunc = func()
+
+type Connector func() (nc *natsgo.Conn, close closeFunc, err error)
 
 func ReuseConnection(connect Connector) Connector {
 	var mu sync.Mutex
 	var nc *natsgo.Conn
-	return func() (*natsgo.Conn, error) {
+	var closeCon closeFunc
+	var leased atomic.Int64
+	var weakClose closeFunc = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if leased.Add(-1) == 0 {
+			closeCon()
+			nc = nil
+		}
+	}
+	return func() (*natsgo.Conn, closeFunc, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if nc == nil {
 			var err error
-			nc, err = connect()
-			return nc, err
+			nc, closeCon, err = connect()
+			if err != nil {
+				return nil, nil, err
+			}
+			leased.Add(1)
+			return nc, weakClose, nil
 		}
-		return nc, nil
+		leased.Add(1)
+		return nc, weakClose, nil
 	}
 }
 
 func ConnectURL(natsURL string) Connector {
-	return func() (*natsgo.Conn, error) {
-		return natsgo.Connect(
+	return func() (*natsgo.Conn, closeFunc, error) {
+		nc, err := natsgo.Connect(
 			natsURL,
 			natsgo.MaxReconnects(3),
 		)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nc, func() { nc.Close() }, nil
 	}
 }
 
