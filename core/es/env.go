@@ -124,7 +124,7 @@ func (e *Env) startProjections() error {
 
 	sub, err := e.store.Subscribe(e.ctx, WithDeliverPolicy(DeliverAllPolicy), WithStartSequence(startSeq))
 	if err != nil {
-		e.log.Error("failed to subscribe to events", "err", err)
+		return fmt.Errorf("failed to subscribe to events: %w", err)
 	}
 
 	go func(sub Subscription) {
