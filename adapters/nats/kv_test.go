@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/codewandler/clstr-go/ports/kv"
 )
 
 func TestKV(t *testing.T) {
@@ -12,14 +14,14 @@ func TestKV(t *testing.T) {
 		Count int
 	}
 	connectNats := NewTestContainer(t)
-	kv, err := NewKvStore[fooBar](KvConfig{
+	kvStore, err := NewKvStore(KvConfig{
 		Bucket:  "fruits",
 		Connect: connectNats,
 	})
 	require.NoError(t, err)
-	require.NoError(t, kv.Set(t.Context(), "apple", fooBar{Fruit: "apple", Count: 10}))
+	require.NoError(t, kv.Put[fooBar](t.Context(), kvStore, "apple", fooBar{Fruit: "apple", Count: 10}, kv.PutOptions{}))
 
-	v, err := kv.Get(t.Context(), "apple")
+	v, err := kv.Get[fooBar](t.Context(), kvStore, "apple")
 	require.NoError(t, err)
 	require.Equal(t, fooBar{Fruit: "apple", Count: 10}, v)
 }

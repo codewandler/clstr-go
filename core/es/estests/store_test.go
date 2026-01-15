@@ -29,7 +29,7 @@ func getStoreSUTs(t *testing.T) []testCase {
 		{
 			name:        "1. ALL memory",
 			store:       es.NewInMemoryStore(),
-			snapshotter: es.NewInMemorySnapshotter(slog.Default()),
+			snapshotter: es.NewInMemorySnapshotter(),
 		},
 		func() testCase {
 			connectNatsC := nats.NewTestContainer(t)
@@ -76,7 +76,7 @@ func getStoreSUTs(t *testing.T) []testCase {
 			return testCase{
 				name:        "3. store=nats, snapshotter=memory",
 				store:       natsES,
-				snapshotter: es.NewInMemorySnapshotter(slog.Default()),
+				snapshotter: es.NewInMemorySnapshotter(),
 			}
 		}(),
 	}

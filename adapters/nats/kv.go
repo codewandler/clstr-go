@@ -2,15 +2,12 @@ package nats
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/nats-io/nats.go/jetstream"
-)
 
-var (
-	ErrKeyNotFound = errors.New("key not found")
+	"github.com/codewandler/clstr-go/ports/kv"
 )
 
 type KvConfig struct {
@@ -18,11 +15,11 @@ type KvConfig struct {
 	Bucket  string
 }
 
-type KvStore[T any] struct {
+type KvStore struct {
 	kv jetstream.KeyValue
 }
 
-func NewKvStore[T any](cfg KvConfig) (*KvStore[T], error) {
+func NewKvStore(cfg KvConfig) (*KvStore, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("bucket is required")
 	}
@@ -47,9 +44,10 @@ func NewKvStore[T any](cfg KvConfig) (*KvStore[T], error) {
 		bucket = "es_checkpoint_store"
 	}
 
-	kv, err := js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
-		Bucket:   bucket,
-		Storage:  jetstream.FileStorage,
+	natsKV, err := js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
+		Bucket:  bucket,
+		Storage: jetstream.FileStorage,
+		// TODO:
 		MaxBytes: 1024 * 1024,
 	})
 
@@ -57,33 +55,35 @@ func NewKvStore[T any](cfg KvConfig) (*KvStore[T], error) {
 		return nil, err
 	}
 
-	return &KvStore[T]{kv: kv}, nil
+	return &KvStore{kv: natsKV}, nil
 }
 
-func (k *KvStore[T]) Set(ctx context.Context, key string, v T) error {
-	data, err := json.Marshal(v)
+func (k *KvStore) Put(ctx context.Context, key string, entry kv.Entry, opts kv.PutOptions) (err error) {
+	_, err = k.kv.Put(ctx, key, entry.Data)
 	if err != nil {
 		return err
 	}
-
-	_, err = k.kv.Put(ctx, key, data)
-	if err != nil {
-		return err
+	if opts.TTL > 0 {
+		err = k.kv.Purge(ctx, key, jetstream.PurgeTTL(opts.TTL))
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (k *KvStore[T]) Get(ctx context.Context, key string) (out T, err error) {
+func (k *KvStore) Get(ctx context.Context, key string) (entry kv.Entry, err error) {
 	v, err := k.kv.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			return out, ErrKeyNotFound
+			return entry, kv.ErrNotFound
 		}
-		return out, fmt.Errorf("failed to get checkpoint for %s: %w", key, err)
+		return entry, fmt.Errorf("failed to get checkpoint for %s: %w", key, err)
 	}
-	err = json.Unmarshal(v.Value(), &out)
-	if err != nil {
-		return out, err
-	}
-	return out, nil
+	entry.Data = v.Value()
+	return entry, nil
 }
+
+func (k *KvStore) Delete(ctx context.Context, key string) error { return k.kv.Delete(ctx, key) }
+
+var _ kv.Store = (*KvStore)(nil)

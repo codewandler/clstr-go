@@ -18,7 +18,7 @@ func TestStream(t *testing.T) {
 	et := es.NewTestEnv(
 		t,
 		es.WithInMemory(),
-		es.WithSnapshotter(es.NewInMemorySnapshotter(slog.Default())),
+		es.WithSnapshotter(es.NewInMemorySnapshotter()),
 		es.WithAggregates(new(domain.TestAgg)),
 	)
 

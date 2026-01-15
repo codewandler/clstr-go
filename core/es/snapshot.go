@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
+
+	"github.com/codewandler/clstr-go/ports/kv"
 )
 
 var (
@@ -39,8 +40,8 @@ type (
 	}
 
 	Snapshotter interface {
-		SaveSnapshot(ctx context.Context, snapshot *Snapshot) error
-		LoadSnapshot(ctx context.Context, objType, objID string) (*Snapshot, error)
+		SaveSnapshot(ctx context.Context, snapshot Snapshot) error
+		LoadSnapshot(ctx context.Context, objType, objID string) (Snapshot, error)
 	}
 )
 
@@ -62,11 +63,12 @@ func LoadSnapshot(
 	ctx context.Context,
 	snapshotter Snapshotter,
 	aggType, aggID string,
-) (*Snapshot, error) {
+) (ss Snapshot, err error) {
 	if snapshotter == nil {
-		return nil, ErrSnapshotterUnconfigured
+		return ss, ErrSnapshotterUnconfigured
 	}
-	return snapshotter.LoadSnapshot(ctx, aggType, aggID)
+	ss, err = snapshotter.LoadSnapshot(ctx, aggType, aggID)
+	return
 }
 
 func ApplySnapshot(ctx context.Context, snapshotter Snapshotter, agg Aggregate) (err error) {
@@ -87,7 +89,7 @@ func ApplySnapshot(ctx context.Context, snapshotter Snapshotter, agg Aggregate) 
 	return nil
 }
 
-func CreateSnapshot(agg Aggregate) (ss *Snapshot, err error) {
+func CreateSnapshot(agg Aggregate) (ss Snapshot, err error) {
 	var data []byte
 	s, ok := any(agg).(Snapshottable)
 	if ok {
@@ -96,9 +98,9 @@ func CreateSnapshot(agg Aggregate) (ss *Snapshot, err error) {
 		data, err = json.Marshal(agg)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to createAndSafeSnapshotForAgg: %w", err)
+		return ss, fmt.Errorf("failed to snapshot: %w", err)
 	}
-	ss = &Snapshot{
+	ss = Snapshot{
 		SnapshotID:    gonanoid.Must(),
 		StreamSeq:     agg.GetSeq(),
 		ObjID:         agg.GetID(),
@@ -114,38 +116,37 @@ func CreateSnapshot(agg Aggregate) (ss *Snapshot, err error) {
 
 // === In-Memory Snapshotter ===
 
-type InMemorySnapshotter struct {
-	mu        sync.Mutex
-	log       *slog.Logger
-	snapshots map[string]*Snapshot
+func NewInMemorySnapshotter() *KeyValueSnapshotter {
+	return NewKeyValueSnapshotter(kv.NewMemStore())
 }
 
-func NewInMemorySnapshotter(log *slog.Logger) *InMemorySnapshotter {
-	return &InMemorySnapshotter{
-		log:       log.With(slog.String("snapshotter", "memory")),
-		snapshots: map[string]*Snapshot{},
+// === KV Snapshotter ===
+
+type KeyValueSnapshotter struct {
+	store kv.Store
+}
+
+func NewKeyValueSnapshotter(store kv.Store) *KeyValueSnapshotter {
+	return &KeyValueSnapshotter{store: store}
+}
+
+func (k *KeyValueSnapshotter) getKey(objType, objID string) string {
+	return fmt.Sprintf("%s-%s", objType, objID)
+}
+
+func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapshot) error {
+	return kv.Put(ctx, k.store, k.getKey(snapshot.ObjType, snapshot.ObjID), snapshot, kv.PutOptions{})
+}
+
+func (k *KeyValueSnapshotter) LoadSnapshot(ctx context.Context, objType, objID string) (snap Snapshot, err error) {
+	snap, err = kv.Get[Snapshot](ctx, k.store, k.getKey(objType, objID))
+	if err != nil {
+		if errors.Is(err, kv.ErrNotFound) {
+			return snap, ErrSnapshotNotFound
+		}
+		return snap, err
 	}
+	return snap, nil
 }
 
-func (i *InMemorySnapshotter) SaveSnapshot(_ context.Context, snapshot *Snapshot) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	sk := fmt.Sprintf("%s-%s", snapshot.ObjType, snapshot.ObjID)
-	i.snapshots[sk] = snapshot
-	return nil
-}
-
-func (i *InMemorySnapshotter) LoadSnapshot(_ context.Context, objType, objID string) (*Snapshot, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	sk := fmt.Sprintf("%s-%s", objType, objID)
-	s, ok := i.snapshots[sk]
-	if !ok {
-		return nil, ErrSnapshotNotFound
-	}
-	return s, nil
-}
-
-var _ Snapshotter = &InMemorySnapshotter{}
+var _ Snapshotter = (*KeyValueSnapshotter)(nil)

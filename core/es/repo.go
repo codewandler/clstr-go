@@ -18,7 +18,7 @@ type (
 	Repository       interface {
 		Load(ctx context.Context, agg Aggregate, opts ...LoadOption) error
 		Save(ctx context.Context, agg Aggregate, opts ...SaveOption) error
-		CreateSnapshot(ctx context.Context, agg Aggregate) (*Snapshot, error)
+		CreateSnapshot(ctx context.Context, agg Aggregate) (Snapshot, error)
 	}
 )
 
@@ -272,17 +272,17 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 	return nil
 }
 
-func (r *repository) CreateSnapshot(ctx context.Context, agg Aggregate) (ss *Snapshot, err error) {
+func (r *repository) CreateSnapshot(ctx context.Context, agg Aggregate) (ss Snapshot, err error) {
 	if r.snapshotter == nil {
-		return nil, ErrSnapshotterUnconfigured
+		return ss, ErrSnapshotterUnconfigured
 	}
 	ss, err = CreateSnapshot(agg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create createAndSafeSnapshotForAgg: %w", err)
+		return ss, fmt.Errorf("failed to create snapshot: %w", err)
 	}
 	err = r.snapshotter.SaveSnapshot(ctx, ss)
 	if err != nil {
-		return nil, fmt.Errorf("failed to save createAndSafeSnapshotForAgg: %w", err)
+		return ss, fmt.Errorf("failed to save snapshot: %w", err)
 	}
 	r.log.Debug("snapshot saved", ss.logAttrs())
 	return

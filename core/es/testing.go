@@ -1,7 +1,6 @@
 package es
 
 import (
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,7 +18,7 @@ func NewTestEnv(
 	opts ...EnvOption,
 ) *TestingEnv {
 	e, err := NewEnv(
-		WithSnapshotter(NewInMemorySnapshotter(slog.Default())),
+		WithSnapshotter(NewInMemorySnapshotter()),
 		WithStore(NewInMemoryStore()),
 		WithEnvOpts(opts...),
 	)

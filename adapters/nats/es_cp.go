@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/codewandler/clstr-go/core/es"
+	"github.com/codewandler/clstr-go/ports/kv"
 )
 
 type CpStoreConfig struct {
@@ -16,11 +17,11 @@ type CpStoreConfig struct {
 }
 
 type CpStore struct {
-	kv *KvStore[es.Version]
+	kv *KvStore
 }
 
 func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
-	kv, err := NewKvStore[es.Version](KvConfig{
+	kv, err := NewKvStore(KvConfig{
 		Bucket:  cfg.Bucket,
 		Connect: cfg.Connect,
 	})
@@ -39,9 +40,9 @@ func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, er
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	v, err := c.kv.Get(ctx, c.getKey(projectionName, aggKey))
+	v, err := kv.Get[es.Version](ctx, c.kv, c.getKey(projectionName, aggKey))
 	if err != nil {
-		if errors.Is(err, ErrKeyNotFound) {
+		if errors.Is(err, kv.ErrNotFound) {
 			return 0, nil
 		}
 		return 0, err
@@ -52,8 +53,7 @@ func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, er
 func (c *CpStore) Set(projectionName, aggKey string, lastVersion es.Version) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	return c.kv.Set(ctx, c.getKey(projectionName, aggKey), lastVersion)
+	return kv.Put[es.Version](ctx, c.kv, c.getKey(projectionName, aggKey), lastVersion, kv.PutOptions{})
 }
 
 var _ es.CpStore = (*CpStore)(nil)
@@ -67,7 +67,7 @@ type SubCpStoreConfig struct {
 }
 
 type SubCpStore struct {
-	kv  *KvStore[uint64]
+	kv  *KvStore
 	key string
 }
 
@@ -78,7 +78,7 @@ func NewSubCpStore(cfg SubCpStoreConfig) (*SubCpStore, error) {
 	if cfg.Key == "" {
 		return nil, errors.New("key is required")
 	}
-	kv, err := NewKvStore[uint64](KvConfig{
+	kv, err := NewKvStore(KvConfig{
 		Bucket:  cfg.Bucket,
 		Connect: cfg.Connect,
 	})
@@ -92,9 +92,9 @@ func (s *SubCpStore) Get() (lastSeq uint64, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	lastSeq, err = s.kv.Get(ctx, s.key)
+	lastSeq, err = kv.Get[uint64](ctx, s.kv, s.key)
 	if err != nil {
-		if errors.Is(err, ErrKeyNotFound) {
+		if errors.Is(err, kv.ErrNotFound) {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("failed to get last seq: %w", err)
@@ -105,7 +105,7 @@ func (s *SubCpStore) Get() (lastSeq uint64, err error) {
 func (s *SubCpStore) Set(lastSeq uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return s.kv.Set(ctx, s.key, lastSeq)
+	return kv.Put[uint64](ctx, s.kv, s.key, lastSeq, kv.PutOptions{})
 }
 
 var _ es.SubCpStore = (*SubCpStore)(nil)

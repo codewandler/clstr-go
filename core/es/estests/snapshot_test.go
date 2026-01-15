@@ -26,7 +26,7 @@ func TestSnapshot(t *testing.T) {
 	})
 	require.NoError(t, err)
 	snapshotters := []es.Snapshotter{
-		es.NewInMemorySnapshotter(slog.Default()),
+		es.NewInMemorySnapshotter(),
 		natsSnapshotter,
 	}
 

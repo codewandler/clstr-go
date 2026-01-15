@@ -48,7 +48,7 @@ func TestProjection(t *testing.T) {
 
 	var (
 		aggID         = "my-agg-1"
-		mySnapshotter = es.NewInMemorySnapshotter(slog.Default())
+		mySnapshotter = es.NewInMemorySnapshotter()
 		myStore       = es.NewInMemoryStore()
 		myCP          = es.NewInMemoryCpStore()
 	)

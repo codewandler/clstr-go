@@ -53,7 +53,7 @@ func (i *InMemoryProjection[T]) Handle(ctx context.Context, env Envelope, event 
 			return err
 		}
 		nextVersion := i.version + 1
-		err = i.snapshotter.SaveSnapshot(ctx, &Snapshot{
+		err = i.snapshotter.SaveSnapshot(ctx, Snapshot{
 			SnapshotID:    gonanoid.Must(),
 			ObjID:         i.name,
 			ObjType:       "proj-in-memory",

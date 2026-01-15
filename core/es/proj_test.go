@@ -28,7 +28,7 @@ func (m *myInMemoryTestProj) Apply(ctx context.Context, env Envelope, event any)
 
 func TestProjection_InMemory(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
-	memSnapshotter := NewInMemorySnapshotter(slog.Default())
+	memSnapshotter := NewInMemorySnapshotter()
 
 	type MyProj = InMemoryProjection[*myInMemoryTestProj]
 
