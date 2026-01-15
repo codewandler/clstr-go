@@ -11,6 +11,14 @@ tasks:
     cmds:
       - goimports -v -w -local "$(go list -m)" .
 
+  loadtest:
+    env:
+      N: 20000  # total events
+      B: 2000   # batch size
+      BACKEND: nats
+    cmds:
+      - go run ./cmd/loadtest/
+
   default:
     cmds:
       - task: test

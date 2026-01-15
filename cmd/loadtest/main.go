@@ -15,6 +15,8 @@ import (
 
 // === Config ===
 
+// NOTE: run nats: docker run -v "/tmp/nats/jetstream:/tmp/nats/jetstream" --net=host nats:latest -js
+
 var (
 	logLevel    = slog.LevelInfo
 	N           = getEnvInt("N", 50_000)
@@ -162,7 +164,7 @@ func createMemEnv(log *slog.Logger) (env *es.Env) {
 func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 	var err error
 
-	connectNats := nats.NewTestContainer(lt)
+	connectNats := nats.ConnectDefault()
 	var store es.EventStore
 	store, err = nats.NewEventStore(nats.EventStoreConfig{
 		Log:           log,

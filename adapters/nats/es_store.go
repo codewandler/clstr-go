@@ -93,11 +93,14 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 	log.Debug("ensuring stream")
 
+	// TODO: retentions
+
 	stream, streamInfo, err := ensureStream(js, jetstream.StreamConfig{
 		Name:     streamName,
 		Subjects: streamSubjects,
 		//Retention:  jetstream.LimitsPolicy,
-		//Storage:    jetstream.MemoryStorage,
+		//Storage: jetstream.MemoryStorage,
+		Storage: jetstream.FileStorage,
 		//MaxAge:     0,
 		//DenyDelete: true,
 		//DenyPurge:  true,
@@ -399,8 +402,6 @@ func (e *EventStore) Append(
 }
 
 func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Envelope) (lastSeq uint64, err error) {
-	//appendAt := time.Now()
-
 	err = ev.Validate()
 	if err != nil {
 		return 0, fmt.Errorf("failed to validate event: %w", err)
@@ -417,18 +418,21 @@ func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Env
 		return 0, err
 	}
 
-	var ack *jetstream.PubAck
-	ack, err = e.js.PublishMsg(
-		ctx,
+	var ackF jetstream.PubAckFuture
+	ackF, err = e.js.PublishMsgAsync(
 		msg,
 		jetstream.WithMsgID(ev.ID),
 	)
-
 	if err != nil {
 		return 0, fmt.Errorf("failed to append to subject %s %s: %w", subject, ev.Type, err)
 	}
 
-	return ack.Sequence, nil
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case ack := <-ackF.Ok():
+		return ack.Sequence, nil
+	}
 }
 
 func ensureStream(js jetstream.JetStream, cfg jetstream.StreamConfig) (s jetstream.Stream, si *jetstream.StreamInfo, err error) {
