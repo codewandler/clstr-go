@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"runtime"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/codewandler/clstr-go/adapters/nats"
+	"github.com/codewandler/clstr-go/core/cache"
 	"github.com/codewandler/clstr-go/core/es"
 )
 
@@ -21,9 +23,11 @@ import (
 var (
 	logLevel      = slog.LevelInfo
 	N             = getEnvInt("N", 50_000)
+	numUsers      = getEnvInt("U", 100)
 	batchSize     = getEnvInt("B", 1_000)
 	backendType   = getEnv("BACKEND", "nats")
 	useSnapshot   = getEnvBool("SNAPSHOT", true)
+	useCache      = getEnvBool("CACHE", false)
 	loadAfterSave = getEnvBool("LOAD_AFTER_SAVE", false)
 )
 
@@ -78,8 +82,11 @@ func main() {
 		}))
 	)
 
-	fmt.Printf("Snaphot: %s\n", strconv.FormatBool(useSnapshot))
-	fmt.Printf("Backend: %s\n", backendType)
+	fmt.Printf("        Snaphot: %s\n", strconv.FormatBool(useSnapshot))
+	fmt.Printf("        Backend: %s\n", backendType)
+	fmt.Printf("Load after save: %s\n", strconv.FormatBool(loadAfterSave))
+	fmt.Printf("     Batch size: %d\n", batchSize)
+	fmt.Printf("      Num users: %d\n", numUsers)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -94,7 +101,16 @@ func main() {
 		env = createMemEnv(log)
 	}
 
-	repo = es.NewTypedRepositoryFrom[*User](log, env.Repository(), es.WithRepoCacheLRU(1_000))
+	var cacheOption es.RepoCacheOption = es.WithRepoCache(cache.NewNop())
+	if useCache {
+		cacheOption = es.WithRepoCacheLRU(1_000)
+	}
+
+	repo = es.NewTypedRepositoryFrom[*User](
+		log,
+		env.Repository(),
+		cacheOption,
+	)
 
 	// === START ===
 
@@ -103,25 +119,27 @@ func main() {
 
 	startAt := time.Now()
 
-	var myUser *User
-	var userID = "user-1"
-	myUser, err = repo.GetOrCreate(ctx, userID, es.WithSnapshot(true))
-	checkErr(err)
-	checkNil(myUser)
-
 	lastTime := time.Now()
 
 	var loaded *User
 	for i := 0; i < N; i++ {
-		// write a change
-		checkErr(myUser.ChangeEmail(fmt.Sprintf("user@host-%d.com", i)))
-		checkErr(repo.Save(ctx, myUser, es.WithSnapshot(useSnapshot)))
+		func(i int, userID string) {
 
-		if loadAfterSave {
-			loaded, err = repo.GetByID(ctx, userID, es.WithSnapshot(useSnapshot))
+			var myUser *User
+			myUser, err = repo.GetOrCreate(ctx, userID, es.WithSnapshot(useSnapshot))
 			checkErr(err)
-			checkNil(loaded)
-		}
+			checkNil(myUser)
+
+			// write a change
+			checkErr(myUser.ChangeEmail(fmt.Sprintf("%s@host-%d.example.com", userID, i)))
+			checkErr(repo.Save(ctx, myUser, es.WithSnapshot(useSnapshot)))
+
+			if loadAfterSave {
+				loaded, err = repo.GetByID(ctx, userID, es.WithSnapshot(useSnapshot))
+				checkErr(err)
+				checkNil(loaded)
+			}
+		}(i, fmt.Sprintf("user-%d", rand.Intn(numUsers)))
 
 		if i == 0 {
 			continue
@@ -148,8 +166,8 @@ func main() {
 	runtime.GC()
 
 	fmt.Printf("total runtime: %.3f seconds\n", took.Seconds())
-	fmt.Printf("      version: %d\n", myUser.GetVersion())
-	fmt.Printf("   stream seq: %d\n", myUser.GetSeq())
+	//fmt.Printf("      version: %d\n", myUser.GetVersion())
+	//fmt.Printf("   stream seq: %d\n", myUser.GetSeq())
 	fmt.Printf("avg. writes/s: %d\n", int(float64(N)/took.Seconds()))
 }
 
