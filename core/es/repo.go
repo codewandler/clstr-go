@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/codewandler/clstr-go/core/perkey"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/codewandler/clstr-go/core/cache"
@@ -290,6 +291,8 @@ type (
 		// GetByID gets an aggregate by ID. If the aggregate does not exist, it is created.
 		GetByID(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
 
+		WithTransaction(ctx context.Context, aggID string, do func(T) error, opts ...GetOrCreateOption) error
+
 		Save(ctx context.Context, agg T, opts ...SaveOption) error
 	}
 )
@@ -298,6 +301,7 @@ type typedRepo[T Aggregate] struct {
 	r               Repository
 	log             *slog.Logger
 	cache           cache.TypedCache[T]
+	pkTrans         *perkey.Scheduler[string]
 	defaultSaveOpts []SaveOption
 	defaultLoadOpts []LoadOption
 }
@@ -318,6 +322,26 @@ func (t *typedRepo[T]) NewWithID(id string) T {
 	}
 	a.SetID(id)
 	return a
+}
+
+func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn func(T) error, opts ...GetOrCreateOption) error {
+	return t.pkTrans.Do(aggID, func() (err error) {
+		var a T
+		a, err = t.GetOrCreate(ctx, aggID, opts...)
+		if err != nil {
+			return err
+		}
+		err = fn(a)
+		if err != nil {
+			return err
+		}
+
+		err = t.Save(ctx, a, newGetOrCreateOptions(opts...).saveOpts...)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (t *typedRepo[T]) Create(ctx context.Context, aggID string, opts ...SaveOption) (a T, err error) {
@@ -408,5 +432,6 @@ func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository, opts ..
 		cache:           cache.NewTyped[T](options.cache),
 		defaultLoadOpts: options.loadOpts,
 		defaultSaveOpts: options.saveOpts,
+		pkTrans:         perkey.New[string](),
 	}
 }

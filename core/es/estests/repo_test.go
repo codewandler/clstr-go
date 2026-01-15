@@ -3,8 +3,11 @@ package estests
 import (
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/codewandler/clstr-go/core/es"
@@ -76,4 +79,42 @@ func TestRepository_Typed(t *testing.T) {
 		println(string(d))
 	})
 
+}
+
+func TestRepository_Concurrency(t *testing.T) {
+	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	r := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository(), es.WithRepoCacheLRU(100))
+
+	a, err := r.Create(t.Context(), "my-agg-1")
+	require.NoError(t, err)
+	require.NotNil(t, a)
+
+	var N = 10
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < 10; i++ {
+		go func() {
+			assert.NoError(t, r.WithTransaction(t.Context(), "my-agg-1", func(b *domain.TestAgg) (err error) {
+				require.NoError(t, b.IncBy(1))
+				return nil
+			}))
+			wg.Done()
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-time.After(time.Second * 2):
+		t.Fatal("timeout")
+	case <-done:
+	}
+
+	a, err = r.GetByID(t.Context(), "my-agg-1")
+	require.NoError(t, err)
+	require.EqualValues(t, 10, a.Count())
 }
