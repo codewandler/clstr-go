@@ -2,6 +2,7 @@ package nats
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -24,4 +25,11 @@ func TestKV(t *testing.T) {
 	v, err := kv.Get[fooBar](t.Context(), kvStore, "apple")
 	require.NoError(t, err)
 	require.Equal(t, fooBar{Fruit: "apple", Count: 10}, v)
+
+	// TTL
+	ttl := 1 * time.Second
+	require.NoError(t, kv.Put[fooBar](t.Context(), kvStore, "banana", fooBar{Fruit: "banana", Count: 20}, kv.PutOptions{TTL: ttl}))
+	<-time.After(ttl + 100*time.Millisecond)
+	_, err = kv.Get[fooBar](t.Context(), kvStore, "banana")
+	require.ErrorIs(t, err, kv.ErrNotFound)
 }

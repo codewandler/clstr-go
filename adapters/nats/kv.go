@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 
@@ -11,8 +12,10 @@ import (
 )
 
 type KvConfig struct {
-	Connect Connector
-	Bucket  string
+	Connect      Connector
+	Bucket       string
+	MaxBytes     int
+	MaxValueSize int
 }
 
 type KvStore struct {
@@ -22,6 +25,15 @@ type KvStore struct {
 func NewKvStore(cfg KvConfig) (*KvStore, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("bucket is required")
+	}
+
+	// set default
+	if cfg.MaxValueSize <= 0 {
+		cfg.MaxValueSize = -1
+	}
+
+	if cfg.MaxBytes <= 0 {
+		cfg.MaxBytes = -1
 	}
 
 	doConnect := cfg.Connect
@@ -48,7 +60,9 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 		Bucket:  bucket,
 		Storage: jetstream.FileStorage,
 		// TODO:
-		MaxBytes: 1024 * 1024,
+		MaxBytes:       int64(cfg.MaxBytes),
+		MaxValueSize:   int32(cfg.MaxValueSize),
+		LimitMarkerTTL: 10 * time.Second,
 	})
 
 	if err != nil {
