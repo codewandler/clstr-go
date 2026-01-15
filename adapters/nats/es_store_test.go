@@ -11,9 +11,7 @@ import (
 	"github.com/codewandler/clstr-go/core/es"
 )
 
-func TestNats_Eventsourcing(t *testing.T) {
-	slog.SetLogLoggerLevel(slog.LevelDebug)
-
+func newTestStore(t *testing.T) *EventStore {
 	connectNatsC := NewTestContainer(t)
 	store, err := NewEventStore(EventStoreConfig{
 		Connect:       connectNatsC,
@@ -25,6 +23,13 @@ func TestNats_Eventsourcing(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, store)
+	return store
+}
+
+func TestNats_Eventsourcing(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	store := newTestStore(t)
 
 	require.Equal(t, "foo.tenant-1.test.1234", store.subjectForAggregate("test", "1234"))
 
@@ -112,4 +117,44 @@ func TestNats_Eventsourcing(t *testing.T) {
 		require.NotNil(t, res)
 		require.EqualValues(t, 6, res.LastSeq)
 	})
+}
+
+func TestNats_EventStore_Load_Latency(t *testing.T) {
+	var (
+		N     = 1_000
+		M     = 200
+		R     = 980
+		aggID = "agg-123"
+	)
+	store := newTestStore(t)
+
+	if R >= N {
+		panic("R must be smaller than N")
+	}
+
+	for i := 0; i < N; i++ {
+		res, err := store.Append(t.Context(), "test", aggID, es.Version(i), []es.Envelope{
+			{
+				ID:            gonanoid.Must(),
+				OccurredAt:    time.Now(),
+				AggregateType: "test",
+				AggregateID:   aggID,
+				Type:          "foobar",
+				Version:       es.Version(i + 1),
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+	}
+
+	startAt := time.Now()
+	for i := 0; i < M; i++ {
+		events, err := store.Load(t.Context(), "test", aggID, es.WithStartAtSeq(uint64(R+1)))
+		require.NoError(t, err)
+		require.Equal(t, len(events), N-R)
+	}
+	took := time.Since(startAt)
+	perLoad := took / time.Duration(M)
+	t.Logf("took %s, per_item: %s", took, perLoad)
+
 }

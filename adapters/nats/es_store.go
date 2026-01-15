@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	gonanoid "github.com/matoous/go-nanoid/v2"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
@@ -228,6 +227,8 @@ func (e *EventStore) Load(
 	aggID string,
 	opts ...es.StoreLoadOption,
 ) (loadedEvents []es.Envelope, err error) {
+
+	// validate
 	if aggType == "" {
 		return nil, errors.New("aggregate type is empty")
 	}
@@ -235,120 +236,115 @@ func (e *EventStore) Load(
 		return nil, errors.New("aggregate id is empty")
 	}
 
+	// handle options
 	loadOpts := &storeLoadOptions{}
 	for _, opt := range opts {
 		opt.ApplyToStoreLoadOptions(loadOpts)
 	}
 
 	var (
+		startAt      = time.Now()
+		subj         = e.subjectForAggregate(aggType, aggID)
 		startSeq     = loadOpts.startSeq
 		startVersion = loadOpts.startVersion
 	)
 
-	log := e.log.With(
-		slog.Group(
-			"agg",
-			slog.String("type", aggType),
-			slog.String("id", aggID),
-		),
-	)
+	defer func() {
+		if err != nil {
+			e.log.Debug(
+				"loaded events",
+				slog.Group(
+					"agg",
+					slog.String("type", aggType),
+					slog.String("id", aggID),
+				),
+				slog.Group(
+					"opts",
+					startVersion.SlogAttrWithKey("start_version"),
+					slog.Uint64("start_seq", startSeq),
+				),
+				slog.Duration("duration", time.Since(startAt)),
+			)
+		}
+	}()
 
-	log.Debug(
-		"load",
-		slog.Group(
-			"opts",
-			startVersion.SlogAttrWithKey("start_version"),
-			slog.Uint64("start_seq", startSeq),
-		),
-	)
+	// get end sequence TODO: verify this is actually correct
+	var endSeq uint64
+	var mre *es.Envelope
+	mre, err = e.getMostRecentEventForAgg(ctx, aggType, aggID)
+	if err != nil {
+		return nil, err
+	}
+	if mre == nil {
+		// there is no recent message, we do not need to load anything
+		return loadedEvents, nil
+	}
+	endSeq = mre.Seq
 
-	// create consumer
-	var (
-		subj         = e.subjectForAggregate(aggType, aggID)
-		consumerName = fmt.Sprintf("loader-%s-%s-%s", aggType, aggID, gonanoid.Must())
-	)
-	consumerCfg := jetstream.ConsumerConfig{
-		Name:           consumerName,
+	// consume
+	consumerCfg := jetstream.OrderedConsumerConfig{
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
-		AckPolicy:      jetstream.AckExplicitPolicy,
 		FilterSubjects: []string{subj},
 	}
 	if startSeq > 0 {
 		consumerCfg.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
 		consumerCfg.OptStartSeq = startSeq
 	}
-	cc, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
+	cc, err := e.stream.OrderedConsumer(ctx, consumerCfg)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		errDelete := e.stream.DeleteConsumer(ctx, consumerName)
-		if errDelete != nil {
-			e.log.Error("failed to delete consumer", slog.Any("error", errDelete))
-		}
-	}()
-	log.Debug(
-		"created new consumer",
-		slog.String("consumer", consumerName),
-		slog.Uint64("start_seq", consumerCfg.OptStartSeq),
-	)
-
-	// get end sequence TODO: verify this is actually correct
-	var endSeq uint64
-	if mre, getRecentErr := e.getMostRecentEventForAgg(ctx, aggType, aggID); getRecentErr == nil && mre != nil && mre.Seq > 0 {
-		endSeq = mre.Seq
-	}
-
-	mc, err := cc.Messages()
+	loadedEvents, err = e.consumeEvents(cc, endSeq)
 	if err != nil {
 		return nil, err
 	}
+	return loadedEvents, nil
+}
+
+func (e *EventStore) consumeEvents(
+	cc jetstream.Consumer,
+	endSeq uint64,
+) (loadedEvents []es.Envelope, err error) {
 
 	var (
-		msg    jetstream.Msg
-		ev     *es.Envelope
-		curSeq uint64
+		mb  jetstream.MessageBatch
+		msg jetstream.Msg
+		ev  *es.Envelope
 	)
+
+outer:
+
 	for {
-		msg, err = mc.Next(jetstream.NextMaxWait(5 * time.Millisecond))
+
+		mb, err = cc.FetchNoWait(100)
 		if err != nil {
-			// ErrMsgIteratorClosed is triggered by .Drain() below
-			if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
-				break
+			return nil, err
+		}
+		if mb.Error() != nil {
+			return nil, mb.Error()
+		}
+
+		empty := true
+
+		for msg = range mb.Messages() {
+			empty = false
+			ev, err = e.decodeMsg(msg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode message: %w", err)
 			}
-			if errors.Is(err, natsgo.ErrTimeout) {
-				break
+
+			loadedEvents = append(loadedEvents, *ev)
+
+			// consume stop criteria
+			if endSeq > 0 && ev.Seq >= endSeq {
+				break outer
 			}
-			return nil, fmt.Errorf("failed to fetch message: %w", err)
 		}
 
-		// ACK
-		err = msg.Ack()
-		if err != nil {
-			return nil, fmt.Errorf("failed to ack message: %w", err)
-		}
-
-		ev, err = e.decodeMsg(msg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode message: %w", err)
-		}
-
-		curSeq = ev.Seq
-		loadedEvents = append(loadedEvents, *ev)
-
-		// consume stop criteria
-		if endSeq > 0 && ev.Seq >= endSeq {
-			mc.Drain()
-			continue
+		if empty {
+			break
 		}
 	}
-
-	log.Debug(
-		"fetched",
-		slog.Int("num_events", len(loadedEvents)),
-		slog.Uint64("last_seq", curSeq),
-		slog.Uint64("end_seq", endSeq),
-	)
 
 	return loadedEvents, nil
 }
@@ -473,9 +469,10 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 		subject = e.subjectForAggregate(aggType, aggID)
 	)
 	if lm, getLastErr := e.stream.GetLastMsgForSubject(ctx, subject); getLastErr != nil {
-		if !errors.Is(getLastErr, jetstream.ErrMsgNotFound) {
-			return nil, getLastErr
+		if errors.Is(getLastErr, jetstream.ErrMsgNotFound) {
+			return nil, nil
 		}
+		return nil, getLastErr
 	} else if lm != nil {
 		lastMsg = &es.Envelope{}
 		err = json.Unmarshal(lm.Data, lastMsg)
