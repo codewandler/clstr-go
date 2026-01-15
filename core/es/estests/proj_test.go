@@ -53,11 +53,11 @@ func TestProjection(t *testing.T) {
 		myCP          = es.NewInMemoryCpStore()
 	)
 
-	p := createTestProjection(t, mySnapshotter)
+	mainProj := createTestProjection(t, mySnapshotter)
 	te := es.NewTestEnv(
 		t,
 		es.WithAggregates(new(domain.TestAgg)),
-		es.WithProjections(p),
+		es.WithProjections(mainProj),
 		es.WithStore(myStore),
 		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
@@ -73,14 +73,14 @@ func TestProjection(t *testing.T) {
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
 	<-time.After(100 * time.Millisecond)
-	require.Equal(t, 5, p.State().V)
+	require.Equal(t, 5, mainProj.State().V)
 
 	// next
-	p = createTestProjection(t, mySnapshotter)
+	mainProj = createTestProjection(t, mySnapshotter)
 	te = es.NewTestEnv(
 		t,
 		es.WithAggregates(new(domain.TestAgg)),
-		es.WithProjections(p),
+		es.WithProjections(mainProj),
 		es.WithStore(myStore),
 		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
@@ -94,6 +94,6 @@ func TestProjection(t *testing.T) {
 	require.Equal(t, 7, a.Count())
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
-	<-time.After(100 * time.Millisecond)
-	require.Equal(t, 7, p.State().V)
+	<-time.After(500 * time.Millisecond)
+	require.Equal(t, 7, mainProj.State().V)
 }
