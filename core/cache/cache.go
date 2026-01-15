@@ -28,6 +28,8 @@ type typedCache[T any] struct {
 	c Cache
 }
 
+func NewTyped[T any](c Cache) TypedCache[T] { return &typedCache[T]{c: c} }
+
 func (t *typedCache[T]) Get(key string) (out T, ok bool) {
 	var v any
 	v, ok = t.c.Get(key)
