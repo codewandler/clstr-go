@@ -179,7 +179,7 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 	}
 
 	if curVersion == 0 {
-		return ErrAggregateNotFound
+		return fmt.Errorf("failed to load agg_type=%s agg_id=%s: %w", aggType, aggID, ErrAggregateNotFound)
 	}
 
 	return nil
