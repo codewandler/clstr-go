@@ -90,17 +90,23 @@ func TestActor_scheduler(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 550*time.Millisecond)
 	defer cancel()
 
-	c := atomic.Int32{}
+	c1 := atomic.Int32{}
+	c2 := atomic.Int32{}
 
 	_ = newTestActor(
 		t,
 		HandleEvery(100*time.Millisecond, func(hc HandlerCtx) error {
-			c.Add(1)
+			c1.Add(1)
+			return nil
+		}),
+		HandleEvery(50*time.Millisecond, func(hc HandlerCtx) error {
+			c2.Add(1)
 			return nil
 		}),
 	)
 
 	<-ctx.Done()
 
-	require.Equal(t, int32(5), c.Load())
+	require.Equal(t, int32(5), c1.Load())
+	require.Equal(t, int32(10), c2.Load())
 }

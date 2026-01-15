@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type (
@@ -79,7 +81,8 @@ func (t *TypedHandlerRegistry) InitHandler(hc HandlerCtx) error {
 		t.defaultHandler = dh
 	} else {
 		t.defaultHandler = func(hc HandlerCtx, msg any) (any, error) {
-			return nil, fmt.Errorf("no handler for msg: %T", msg)
+			mt := msgTypeOf(msg)
+			return nil, fmt.Errorf("no handler for msg: msg_type=%s go_type=%T msg=%+v", mt, msg, msg)
 		}
 	}
 
@@ -146,20 +149,24 @@ func HandleMsg[IN any](msgHandler func(h HandlerCtx, i IN) error) HandlerRegistr
 	})
 }
 
-func HandleMsgWithInit[IN any](
+func HandleMsgWithOpts[IN any](
 	msgHandler func(h HandlerCtx, i IN) error,
-	init HandlerInitFunc,
+	opts ...HandleOption,
 ) HandlerRegistration {
-	return HandleRequestWithInit[IN, emptyOut](
+	return HandleRequestWithOpts[IN, emptyOut](
 		func(h HandlerCtx, i IN) (*emptyOut, error) {
 			return nil, msgHandler(h, i)
 		},
-		init,
+		opts...,
 	)
 }
 
+type tickMsg struct{ mt string }
+
+func (m tickMsg) MsgType() string { return m.mt }
+
 func HandleEvery(interval time.Duration, msgHandler func(h HandlerCtx) error) HandlerRegistration {
-	type tickMsg struct{}
+	msg := tickMsg{mt: "tick/" + gonanoid.Must()}
 	tmr := time.NewTicker(interval)
 	tmr.Stop()
 	start := func() {
@@ -172,36 +179,61 @@ func HandleEvery(interval time.Duration, msgHandler func(h HandlerCtx) error) Ha
 		for {
 			select {
 			case <-tmr.C:
-				if _, err := sendReq(context.Background(), tickMsg{}); err != nil {
+				if _, err := sendReq(context.Background(), msg); err != nil {
 					slog.Default().Error("failed to send tick message", slog.Any("error", err))
 				}
 			}
 		}
 	}()
-	return HandleMsgWithInit[tickMsg](
+	return HandleMsgWithOpts[tickMsg](
 		func(h HandlerCtx, tick tickMsg) error {
 			return msgHandler(h)
 		},
-		func(hc HandlerCtx) error {
+		WithMessageType(msg.MsgType()),
+		WithInitFunc(func(hc HandlerCtx) error {
 			sendReq = hc.Request
 			start()
 			return nil
-		},
+		}),
 	)
 }
 
 func HandleRequest[IN any, OUT any](h func(h HandlerCtx, i IN) (*OUT, error)) HandlerRegistration {
-	return HandleRequestWithInit(h, nil)
+	return HandleRequestWithOpts(h)
 }
 
-func HandleRequestWithInit[IN any, OUT any](
+type HandleOpts struct {
+	MessageType string
+	InitFunc    HandlerInitFunc
+}
+
+type HandleOption func(*HandleOpts)
+
+func WithMessageType(msgType string) HandleOption {
+	return func(o *HandleOpts) {
+		o.MessageType = msgType
+	}
+}
+
+func WithInitFunc(init HandlerInitFunc) HandleOption {
+	return func(o *HandleOpts) {
+		o.InitFunc = init
+	}
+}
+
+func HandleRequestWithOpts[IN any, OUT any](
 	h func(h HandlerCtx, i IN) (*OUT, error),
-	init HandlerInitFunc,
+	opts ...HandleOption,
 ) HandlerRegistration {
+	handleOpts := HandleOpts{
+		MessageType: msgTypeFor[IN](),
+	}
+	for _, opt := range opts {
+		opt(&handleOpts)
+	}
 	return func(registrar HandlerRegistrar) {
-		mt := msgTypeFor[IN]()
 		registrar.Register(
-			mt,
+			handleOpts.MessageType,
 			func() any { return new(IN) },
 			func(hc HandlerCtx, msg any) (any, error) {
 				// TODO: validate
@@ -216,7 +248,7 @@ func HandleRequestWithInit[IN any, OUT any](
 				}
 				return out, nil
 			},
-			init,
+			handleOpts.InitFunc,
 		)
 	}
 }
