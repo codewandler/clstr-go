@@ -9,10 +9,10 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/perkey"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/codewandler/clstr-go/core/cache"
+	"github.com/codewandler/clstr-go/core/perkey"
 )
 
 type (
