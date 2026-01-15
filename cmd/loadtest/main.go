@@ -94,7 +94,7 @@ func main() {
 		env = createMemEnv(log)
 	}
 
-	repo = es.NewTypedRepositoryFrom[*User](log, env.Repository())
+	repo = es.NewTypedRepositoryFrom[*User](log, env.Repository(), es.WithRepoCacheLRU(1_000))
 
 	// === START ===
 
