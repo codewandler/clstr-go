@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codewandler/clstr-go/adapters/nats"
@@ -18,11 +19,24 @@ import (
 // NOTE: run nats: docker run -v "/tmp/nats/jetstream:/tmp/nats/jetstream" --net=host nats:latest -js
 
 var (
-	logLevel    = slog.LevelInfo
-	N           = getEnvInt("N", 50_000)
-	batchSize   = getEnvInt("B", 1_000)
-	backendType = getEnv("BACKEND", "nats")
+	logLevel      = slog.LevelInfo
+	N             = getEnvInt("N", 50_000)
+	batchSize     = getEnvInt("B", 1_000)
+	backendType   = getEnv("BACKEND", "nats")
+	useSnapshot   = getEnvBool("SNAPSHOT", true)
+	loadAfterSave = getEnvBool("LOAD_AFTER_SAVE", false)
 )
+
+func getEnvBool(key string, fallback bool) bool {
+	v := getEnv(key, "0")
+	if v == "" {
+		return fallback
+	}
+	if v == "1" || strings.ToLower(v) == "true" {
+		return true
+	}
+	return false
+}
 
 func getEnv(key, fallback string) string {
 	v, ok := os.LookupEnv(key)
@@ -64,6 +78,9 @@ func main() {
 		}))
 	)
 
+	fmt.Printf("Snaphot: %s\n", strconv.FormatBool(useSnapshot))
+	fmt.Printf("Backend: %s\n", backendType)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -94,10 +111,18 @@ func main() {
 
 	lastTime := time.Now()
 
+	var loaded *User
 	for i := 0; i < N; i++ {
+		// write a change
 		checkErr(myUser.ChangeEmail(fmt.Sprintf("user@host-%d.com", i)))
-		//checkErr(repo.Save(ctx, myUser, es.WithSnapshot(true)))
-		checkErr(repo.Save(ctx, myUser, es.WithSnapshot(false)))
+		checkErr(repo.Save(ctx, myUser, es.WithSnapshot(useSnapshot)))
+
+		if loadAfterSave {
+			loaded, err = repo.GetByID(ctx, userID, es.WithSnapshot(useSnapshot))
+			checkErr(err)
+			checkNil(loaded)
+		}
+
 		if i == 0 {
 			continue
 		}
@@ -125,7 +150,7 @@ func main() {
 	fmt.Printf("total runtime: %.3f seconds\n", took.Seconds())
 	fmt.Printf("      version: %d\n", myUser.GetVersion())
 	fmt.Printf("   stream seq: %d\n", myUser.GetSeq())
-	fmt.Printf("avg. writes/s: %d\n", int(float64(myUser.GetVersion())/took.Seconds()))
+	fmt.Printf("avg. writes/s: %d\n", int(float64(N)/took.Seconds()))
 }
 
 // === stats helpers ===
