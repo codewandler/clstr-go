@@ -1,7 +1,9 @@
 package actor
 
 import (
+	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,5 +84,23 @@ func TestActor_publish_err(t *testing.T) {
 	)
 
 	require.ErrorContains(t, Publish(t.Context(), a, msg{V: 42}), "uups")
+}
 
+func TestActor_scheduler(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 550*time.Millisecond)
+	defer cancel()
+
+	c := atomic.Int32{}
+
+	_ = newTestActor(
+		t,
+		HandleEvery(100*time.Millisecond, func(hc HandlerCtx) error {
+			c.Add(1)
+			return nil
+		}),
+	)
+
+	<-ctx.Done()
+
+	require.Equal(t, int32(5), c.Load())
 }

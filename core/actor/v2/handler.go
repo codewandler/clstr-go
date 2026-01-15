@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 )
 
 type (
@@ -144,7 +146,58 @@ func HandleMsg[IN any](msgHandler func(h HandlerCtx, i IN) error) HandlerRegistr
 	})
 }
 
+func HandleMsgWithInit[IN any](
+	msgHandler func(h HandlerCtx, i IN) error,
+	init HandlerInitFunc,
+) HandlerRegistration {
+	return HandleRequestWithInit[IN, emptyOut](
+		func(h HandlerCtx, i IN) (*emptyOut, error) {
+			return nil, msgHandler(h, i)
+		},
+		init,
+	)
+}
+
+func HandleEvery(interval time.Duration, msgHandler func(h HandlerCtx) error) HandlerRegistration {
+	type tickMsg struct{}
+	tmr := time.NewTicker(interval)
+	tmr.Stop()
+	start := func() {
+		tmr.Reset(interval)
+	}
+	var sendReq func(context.Context, any) (any, error)
+	go func() {
+
+		defer tmr.Stop()
+		for {
+			select {
+			case <-tmr.C:
+				if _, err := sendReq(context.Background(), tickMsg{}); err != nil {
+					slog.Default().Error("failed to send tick message", slog.Any("error", err))
+				}
+			}
+		}
+	}()
+	return HandleMsgWithInit[tickMsg](
+		func(h HandlerCtx, tick tickMsg) error {
+			return msgHandler(h)
+		},
+		func(hc HandlerCtx) error {
+			sendReq = hc.Request
+			start()
+			return nil
+		},
+	)
+}
+
 func HandleRequest[IN any, OUT any](h func(h HandlerCtx, i IN) (*OUT, error)) HandlerRegistration {
+	return HandleRequestWithInit(h, nil)
+}
+
+func HandleRequestWithInit[IN any, OUT any](
+	h func(h HandlerCtx, i IN) (*OUT, error),
+	init HandlerInitFunc,
+) HandlerRegistration {
 	return func(registrar HandlerRegistrar) {
 		mt := msgTypeFor[IN]()
 		registrar.Register(
@@ -163,7 +216,7 @@ func HandleRequest[IN any, OUT any](h func(h HandlerCtx, i IN) (*OUT, error)) Ha
 				}
 				return out, nil
 			},
-			nil,
+			init,
 		)
 	}
 }

@@ -2,6 +2,7 @@ package actor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -109,8 +110,13 @@ func New(opt Options, handler RawHandler) Actor {
 	// Set up scheduler used by handler context
 
 	hCtx := &handlerCtx{
-		send: func(ctx context.Context, cmd any) error {
-			return fmt.Errorf("send not supported")
+		request: func(ctx context.Context, req any) (any, error) {
+			data, err := json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+
+			return RawRequest(ctx, a, msgTypeOf(req), data)
 		},
 		log:     log,
 		Context: ctx,
