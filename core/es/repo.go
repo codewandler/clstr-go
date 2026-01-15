@@ -9,34 +9,17 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/codewandler/clstr-go/core/cache"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type (
-	repoOptions      struct{ snapshotter Snapshotter }
-	RepositoryOption interface{ applyToRepository(*repoOptions) }
-	Repository       interface {
+	Repository interface {
 		Load(ctx context.Context, agg Aggregate, opts ...LoadOption) error
 		Save(ctx context.Context, agg Aggregate, opts ...SaveOption) error
 		CreateSnapshot(ctx context.Context, agg Aggregate, saveSnapshotOpts SnapshotSaveOpts) (Snapshot, error)
 	}
 )
-
-func (o SnapshotterOption) applyToRepository(options *repoOptions) { options.snapshotter = o.v }
-
-type (
-	repoSaveOptions struct {
-		snapshot    bool
-		snapshotTTL time.Duration
-	}
-	repoLoadOptions struct{ snapshot bool }
-	SaveOption      interface{ applyToSaveOptions(*repoSaveOptions) }
-	LoadOption      interface{ applyToLoadOptions(*repoLoadOptions) }
-)
-
-func (o SnapshotOption) applyToSaveOptions(options *repoSaveOptions)    { options.snapshot = true }
-func (o SnapshotTTLOption) applyToSaveOptions(options *repoSaveOptions) { options.snapshotTTL = o.v }
-func (o SnapshotOption) applyToLoadOptions(options *repoLoadOptions)    { options.snapshot = true }
 
 // Repository rehydrates aggregates and persists new events with optimistic concurrency.
 type repository struct {
@@ -46,16 +29,23 @@ type repository struct {
 	snapshotter Snapshotter
 }
 
+func newRepoOpts(opts ...RepositoryOption) repoOpts {
+	var options = repoOpts{
+		cache: cache.NewNop(),
+	}
+	for _, opt := range opts {
+		opt.applyToRepository(&options)
+	}
+	return options
+}
+
 func NewRepository(
 	log *slog.Logger,
 	store EventStore,
 	registry *EventRegistry,
 	opts ...RepositoryOption,
 ) Repository {
-	options := repoOptions{}
-	for _, opt := range opts {
-		opt.applyToRepository(&options)
-	}
+	options := newRepoOpts(opts...)
 
 	r := &repository{
 		log:         log.With(slog.String("repo", fmt.Sprintf("%T", store))),
@@ -69,6 +59,7 @@ func NewRepository(
 
 // Load rehydrates agg from the store and sets GetID/version.
 func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption) (err error) {
+	// validate
 	aggType := agg.GetAggType()
 	if aggType == "" {
 		return errors.New("aggregate type is empty")
@@ -81,12 +72,13 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		return errors.New("aggregate has uncommitted events (dirty=true)")
 	}
 
+	// populate load options
 	loadOptions := repoLoadOptions{}
 	for _, opt := range opts {
 		opt.applyToLoadOptions(&loadOptions)
 	}
 
-	log := r.log.With(
+	/*log := r.log.With(
 		slog.Group(
 			"agg",
 			slog.String("type", aggType),
@@ -96,9 +88,9 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		),
 	)
 
-	log.Debug("loading")
+	log.Debug("loading")*/
 
-	// load createAndSafeSnapshotForAgg
+	// load from snapshot
 	if loadOptions.snapshot {
 		if r.snapshotter == nil {
 			return ErrSnapshotterUnconfigured
@@ -109,11 +101,11 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 				return fmt.Errorf("failed to apply snapshot: %w", err)
 			}
 		} else {
-			log.Debug(
+			/*log.Debug(
 				"snapshot applied",
 				slog.Uint64("seq", agg.GetSeq()),
 				agg.GetVersion().SlogAttr(),
-			)
+			)*/
 		}
 	}
 
@@ -124,7 +116,7 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		minSeq     = curSeq + 1
 	)
 
-	log = r.log.With(
+	/*log = r.log.With(
 		slog.Group(
 			"agg",
 			slog.String("type", aggType),
@@ -132,16 +124,16 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 			slog.Uint64("seq", curSeq),
 			curVersion.SlogAttr(),
 		),
-	)
+	)*/
 
-	log.Debug(
+	/*log.Debug(
 		"load",
 		slog.Group("opts",
 			slog.Uint64("min_seq", minSeq),
 			minVersion.SlogAttrWithKey("min_version"),
 			slog.Bool("snapshot", loadOptions.snapshot),
 		),
-	)
+	)*/
 
 	// load all events
 	loaded, err := r.store.Load(
@@ -301,16 +293,19 @@ type (
 		GetAggType() string
 		New() T
 		NewWithID(id string) T
-		Load(ctx context.Context, a T, opts ...LoadOption) error
 		GetOrCreate(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
+
+		// GetByID gets an aggregate by ID. If the aggregate does not exist, it is created.
 		GetByID(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
+
 		Save(ctx context.Context, agg T, opts ...SaveOption) error
 	}
 )
 
 type typedRepo[T Aggregate] struct {
-	r   Repository
-	log *slog.Logger
+	r     Repository
+	log   *slog.Logger
+	cache cache.TypedCache[T]
 }
 
 func (t *typedRepo[T]) New() T { return t.NewWithID("") }
@@ -329,10 +324,6 @@ func (t *typedRepo[T]) NewWithID(id string) T {
 	}
 	a.SetID(id)
 	return a
-}
-
-func (t *typedRepo[T]) Load(ctx context.Context, a T, opts ...LoadOption) error {
-	return t.r.Load(ctx, a, opts...)
 }
 
 func (t *typedRepo[T]) GetOrCreate(ctx context.Context, aggID string, opts ...LoadOption) (a T, err error) {
@@ -364,16 +355,32 @@ func (t *typedRepo[T]) GetByID(ctx context.Context, aggID string, opts ...LoadOp
 	if aggID == "" {
 		return a, errors.New("aggregate id is empty")
 	}
+
+	// get from cache
+	cached, ok := t.cache.Get(aggID)
+	if ok {
+		return cached, nil
+	}
+
 	a = t.NewWithID(aggID)
 	err = t.r.Load(ctx, a, opts...)
 	if err != nil {
 		return
 	}
+
+	// put to cache
+	t.cache.Put(aggID, a)
+
 	return a, nil
 }
 
-func (t *typedRepo[T]) Save(ctx context.Context, agg T, opts ...SaveOption) error {
-	return t.r.Save(ctx, agg, opts...)
+func (t *typedRepo[T]) Save(ctx context.Context, agg T, opts ...SaveOption) (err error) {
+	err = t.r.Save(ctx, agg, opts...)
+	if err != nil {
+		return err
+	}
+	t.cache.Put(agg.GetID(), agg)
+	return nil
 }
 
 func (t *typedRepo[T]) GetAggType() string {
@@ -381,10 +388,15 @@ func (t *typedRepo[T]) GetAggType() string {
 	return a.GetAggType()
 }
 
-func NewTypedRepository[T Aggregate](log *slog.Logger, s EventStore, reg *EventRegistry) TypedRepository[T] {
-	return NewTypedRepositoryFrom[T](log, NewRepository(log, s, reg))
+func NewTypedRepository[T Aggregate](log *slog.Logger, s EventStore, reg *EventRegistry, opts ...RepositoryOption) TypedRepository[T] {
+	return NewTypedRepositoryFrom[T](log, NewRepository(log, s, reg), opts...)
 }
 
-func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository) TypedRepository[T] {
-	return &typedRepo[T]{r: r, log: log.With(slog.String("repo", fmt.Sprintf("%T", *new(T))))}
+func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository, opts ...RepositoryOption) TypedRepository[T] {
+	options := newRepoOpts(opts...)
+	return &typedRepo[T]{
+		r:     r,
+		log:   log.With(slog.String("repo", fmt.Sprintf("%T", *new(T)))),
+		cache: cache.NewTyped[T](options.cache),
+	}
 }
