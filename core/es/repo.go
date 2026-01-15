@@ -18,21 +18,25 @@ type (
 	Repository       interface {
 		Load(ctx context.Context, agg Aggregate, opts ...LoadOption) error
 		Save(ctx context.Context, agg Aggregate, opts ...SaveOption) error
-		CreateSnapshot(ctx context.Context, agg Aggregate) (Snapshot, error)
+		CreateSnapshot(ctx context.Context, agg Aggregate, saveSnapshotOpts SnapshotSaveOpts) (Snapshot, error)
 	}
 )
 
 func (o SnapshotterOption) applyToRepository(options *repoOptions) { options.snapshotter = o.v }
 
 type (
-	repoSaveOptions struct{ snapshot bool }
+	repoSaveOptions struct {
+		snapshot    bool
+		snapshotTTL time.Duration
+	}
 	repoLoadOptions struct{ snapshot bool }
 	SaveOption      interface{ applyToSaveOptions(*repoSaveOptions) }
 	LoadOption      interface{ applyToLoadOptions(*repoLoadOptions) }
 )
 
-func (o SnapshotOption) applyToSaveOptions(options *repoSaveOptions) { options.snapshot = true }
-func (o SnapshotOption) applyToLoadOptions(options *repoLoadOptions) { options.snapshot = true }
+func (o SnapshotOption) applyToSaveOptions(options *repoSaveOptions)    { options.snapshot = true }
+func (o SnapshotTTLOption) applyToSaveOptions(options *repoSaveOptions) { options.snapshotTTL = o.v }
+func (o SnapshotOption) applyToLoadOptions(options *repoLoadOptions)    { options.snapshot = true }
 
 // Repository rehydrates aggregates and persists new events with optimistic concurrency.
 type repository struct {
@@ -251,7 +255,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 
 	// create snapshot
 	if saveOptions.snapshot {
-		if _, snapshotErr := r.CreateSnapshot(ctx, agg); snapshotErr != nil {
+		if _, snapshotErr := r.CreateSnapshot(ctx, agg, SnapshotSaveOpts{TTL: saveOptions.snapshotTTL}); snapshotErr != nil {
 			return snapshotErr
 		}
 	}
@@ -272,7 +276,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 	return nil
 }
 
-func (r *repository) CreateSnapshot(ctx context.Context, agg Aggregate) (ss Snapshot, err error) {
+func (r *repository) CreateSnapshot(ctx context.Context, agg Aggregate, saveOpts SnapshotSaveOpts) (ss Snapshot, err error) {
 	if r.snapshotter == nil {
 		return ss, ErrSnapshotterUnconfigured
 	}
@@ -280,7 +284,7 @@ func (r *repository) CreateSnapshot(ctx context.Context, agg Aggregate) (ss Snap
 	if err != nil {
 		return ss, fmt.Errorf("failed to create snapshot: %w", err)
 	}
-	err = r.snapshotter.SaveSnapshot(ctx, ss)
+	err = r.snapshotter.SaveSnapshot(ctx, ss, saveOpts)
 	if err != nil {
 		return ss, fmt.Errorf("failed to save snapshot: %w", err)
 	}

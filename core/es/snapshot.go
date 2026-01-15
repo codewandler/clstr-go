@@ -19,6 +19,18 @@ var (
 )
 
 type (
+	SnapshotterOption valueOption[Snapshotter]
+	SnapshotOption    valueOption[bool]
+	SnapshotTTLOption valueOption[time.Duration]
+)
+
+func WithSnapshotter(s Snapshotter) SnapshotterOption     { return SnapshotterOption{v: s} }
+func WithSnapshot(b bool) SnapshotOption                  { return SnapshotOption{v: b} }
+func WithSnapshotTTL(ttl time.Duration) SnapshotTTLOption { return SnapshotTTLOption{v: ttl} }
+
+func (o SnapshotterOption) applyToEnv(e *envOptions) { e.snapshotter = o.v }
+
+type (
 	Snapshot struct {
 		SnapshotID string `json:"snapshot_id"` // SnapshotID is the unique ID of the snapshot
 
@@ -34,13 +46,17 @@ type (
 		Data          []byte    `json:"data"`
 	}
 
+	SnapshotSaveOpts struct {
+		TTL time.Duration
+	}
+
 	Snapshottable interface {
 		Snapshot() (data []byte, err error)
 		RestoreSnapshot(data []byte) error
 	}
 
 	Snapshotter interface {
-		SaveSnapshot(ctx context.Context, snapshot Snapshot) error
+		SaveSnapshot(ctx context.Context, snapshot Snapshot, opts SnapshotSaveOpts) error
 		LoadSnapshot(ctx context.Context, objType, objID string) (Snapshot, error)
 	}
 )
@@ -134,8 +150,10 @@ func (k *KeyValueSnapshotter) getKey(objType, objID string) string {
 	return fmt.Sprintf("%s-%s", objType, objID)
 }
 
-func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapshot) error {
-	return kv.Put(ctx, k.store, k.getKey(snapshot.ObjType, snapshot.ObjID), snapshot, kv.PutOptions{})
+func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapshot, opts SnapshotSaveOpts) error {
+	return kv.Put(ctx, k.store, k.getKey(snapshot.ObjType, snapshot.ObjID), snapshot, kv.PutOptions{
+		TTL: opts.TTL,
+	})
 }
 
 func (k *KeyValueSnapshotter) LoadSnapshot(ctx context.Context, objType, objID string) (snap Snapshot, err error) {

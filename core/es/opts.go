@@ -29,14 +29,11 @@ type (
 	}
 	MultiOption[T any] struct{ opts []T }
 	EnvOpts            MultiOption[EnvOption]
-	SnapshotterOption  valueOption[Snapshotter]
-	SnapshotOption     valueOption[bool]
 )
 
-func WithInMemory() MemoryOption                             { return MemoryOption{} }
-func WithStore(s EventStore) StoreOption                     { return StoreOption{v: s} }
-func WithSnapshotter(s Snapshotter) SnapshotterOption        { return SnapshotterOption{v: s} }
-func WithSnapshot(b bool) SnapshotOption                     { return SnapshotOption{v: b} }
+func WithInMemory() MemoryOption         { return MemoryOption{} }
+func WithStore(s EventStore) StoreOption { return StoreOption{v: s} }
+
 func WithCheckpointStore(cps CpStore) CpStoreOption          { return CpStoreOption{v: cps} }
 func WithSubCheckpointStore(cps SubCpStore) SubCPStoreOption { return SubCPStoreOption{v: cps} }
 func WithEvent[T any]() EventRegisterOption {
@@ -77,7 +74,4 @@ func (o EnvOpts) applyToEnv(e *envOptions) {
 	for _, opt := range o.opts {
 		opt.applyToEnv(e)
 	}
-}
-func (o SnapshotterOption) applyToEnv(e *envOptions) {
-	e.snapshotter = o.v
 }

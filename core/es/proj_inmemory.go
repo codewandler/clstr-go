@@ -63,7 +63,7 @@ func (i *InMemoryProjection[T]) Handle(ctx context.Context, env Envelope, event 
 			SchemaVersion: 0,
 			Encoding:      "json",
 			Data:          data,
-		})
+		}, SnapshotSaveOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to create snapshot: %w", err)
 		}
