@@ -14,6 +14,7 @@ import (
 type KvConfig struct {
 	Connect      Connector
 	Bucket       string
+	TTL          time.Duration
 	MaxBytes     int
 	MaxValueSize int
 }
@@ -57,12 +58,12 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 	}
 
 	natsKV, err := js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
-		Bucket:  bucket,
-		Storage: jetstream.FileStorage,
-		// TODO:
+		Bucket:         bucket,
+		Storage:        jetstream.FileStorage,
 		MaxBytes:       int64(cfg.MaxBytes),
 		MaxValueSize:   int32(cfg.MaxValueSize),
 		LimitMarkerTTL: 10 * time.Second,
+		TTL:            cfg.TTL,
 	})
 
 	if err != nil {
