@@ -110,7 +110,7 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 		return nil, err
 	}
 
-	log.Info("ensured", slog.Any("stream", streamInfo))
+	log.Debug("ensured", slog.Any("stream", streamInfo))
 
 	return &EventStore{
 		nc:            nc,
@@ -166,7 +166,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		consumerCfg.DeliverPolicy = jetstream.DeliverNewPolicy
 	}
 
-	e.log.Info("subscribe", slog.Any("config", filterSubjects))
+	e.log.Debug("subscribe", slog.Any("config", filterSubjects))
 
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {

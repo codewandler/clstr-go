@@ -54,6 +54,8 @@ func (o SubCPStoreOption) applyToEnv(e *envOptions) { e.subCpStore = o.v }
 func (o MemoryOption) applyToEnv(e *envOptions) {
 	e.store = NewInMemoryStore()
 	e.cpStore = NewInMemoryCpStore()
+	e.subCpStore = NewInMemorySubCpStore()
+	e.snapshotter = NewInMemorySnapshotter()
 }
 func (o EventRegisterOption) applyToEnv(e *envOptions) {
 	e.events = append(e.events, o)
