@@ -80,7 +80,12 @@ func (n *Node) handleMsg(ctx context.Context, env Envelope) (data []byte, err er
 	if err != nil {
 		n.log.Error(
 			"failed to handle message",
-			slog.Group("message", slog.String("type", env.Type), slog.Any("headers", env.Headers)),
+			slog.Group(
+				"message",
+				slog.String("type", env.Type),
+				slog.Any("headers", env.Headers),
+				slog.String("data", string(env.Data)),
+			),
 			slog.Any("error", err),
 		)
 	}
