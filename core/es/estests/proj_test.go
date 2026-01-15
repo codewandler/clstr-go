@@ -64,13 +64,15 @@ func TestProjection(t *testing.T) {
 	)
 
 	repo := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
+
+	// create, incBy(5), save
 	a, err := repo.GetOrCreate(t.Context(), aggID)
 	require.NoError(t, err)
 	require.NoError(t, a.IncBy(5))
-	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 	require.Equal(t, 5, a.Count())
+	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
-	<-time.After(1 * time.Second)
+	<-time.After(100 * time.Millisecond)
 	require.Equal(t, 5, p.State().V)
 
 	// next
@@ -83,13 +85,15 @@ func TestProjection(t *testing.T) {
 		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
 	)
+
 	repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
-	a, err = repo.GetOrCreate(t.Context(), aggID)
+	a, err = repo.GetByID(t.Context(), aggID)
 	require.NoError(t, err)
 	require.Equal(t, 5, a.Count())
 	require.NoError(t, a.IncBy(2))
+	require.Equal(t, 7, a.Count())
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
-	<-time.After(1 * time.Second)
+	<-time.After(100 * time.Millisecond)
 	require.Equal(t, 7, p.State().V)
 }

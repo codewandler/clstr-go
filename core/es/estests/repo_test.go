@@ -38,32 +38,31 @@ func TestRepository_Typed(t *testing.T) {
 
 	require.Equal(t, "test_agg", repo.GetAggType())
 
-	// init
-	a := repo.NewWithID(aggID)
-	require.Equal(t, aggID, a.GetID())
-	require.EqualValues(t, 0, a.GetVersion())
-
 	// load fails
-	require.ErrorIs(t, repo.Load(t.Context(), a), es.ErrAggregateNotFound)
+	a, err := repo.GetByID(t.Context(), aggID)
+	require.ErrorIs(t, err, es.ErrAggregateNotFound)
+
+	a, err = repo.Create(t.Context(), aggID)
+	require.NoError(t, err)
+	require.NotNil(t, a)
+	require.Equal(t, aggID, a.GetID())
+	require.EqualValues(t, es.Version(1), a.GetVersion())
 
 	// save
 	require.NoError(t, a.IncBy(7))
 	require.NoError(t, repo.Save(t.Context(), a))
-	require.EqualValues(t, 1, a.GetVersion())
+	require.EqualValues(t, 2, a.GetVersion())
 	require.EqualValues(t, 7, a.Count())
 
 	t.Run("load", func(t *testing.T) {
 		// init
-		loaded := repo.NewWithID(aggID)
+		var loaded *domain.TestAgg
+		loaded, err = repo.GetByID(t.Context(), aggID)
+		require.NoError(t, err)
 		require.Equal(t, aggID, loaded.GetID())
-		require.Equal(t, uint64(0), loaded.GetSeq())
-		require.EqualValues(t, 0, loaded.GetVersion())
-
-		// load
-		require.NoError(t, repo.Load(t.Context(), loaded))
-		t.Logf("loaded: %+v", loaded)
 		require.EqualValues(t, 7, loaded.Count())
-		require.EqualValues(t, 1, loaded.GetVersion())
+		require.EqualValues(t, 2, loaded.GetVersion())
+
 	})
 
 	t.Run("load by ID", func(t *testing.T) {

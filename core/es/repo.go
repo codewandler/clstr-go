@@ -9,8 +9,9 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/codewandler/clstr-go/core/cache"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+
+	"github.com/codewandler/clstr-go/core/cache"
 )
 
 type (
@@ -27,16 +28,6 @@ type repository struct {
 	store       EventStore
 	registry    *EventRegistry
 	snapshotter Snapshotter
-}
-
-func newRepoOpts(opts ...RepositoryOption) repoOpts {
-	var options = repoOpts{
-		cache: cache.NewNop(),
-	}
-	for _, opt := range opts {
-		opt.applyToRepository(&options)
-	}
-	return options
 }
 
 func NewRepository(
@@ -293,7 +284,8 @@ type (
 		GetAggType() string
 		New() T
 		NewWithID(id string) T
-		GetOrCreate(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
+		Create(ctx context.Context, aggID string, opts ...SaveOption) (agg T, err error)
+		GetOrCreate(ctx context.Context, aggID string, opts ...GetOrCreateOption) (agg T, err error)
 
 		// GetByID gets an aggregate by ID. If the aggregate does not exist, it is created.
 		GetByID(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
@@ -303,9 +295,11 @@ type (
 )
 
 type typedRepo[T Aggregate] struct {
-	r     Repository
-	log   *slog.Logger
-	cache cache.TypedCache[T]
+	r               Repository
+	log             *slog.Logger
+	cache           cache.TypedCache[T]
+	defaultSaveOpts []SaveOption
+	defaultLoadOpts []LoadOption
 }
 
 func (t *typedRepo[T]) New() T { return t.NewWithID("") }
@@ -326,29 +320,34 @@ func (t *typedRepo[T]) NewWithID(id string) T {
 	return a
 }
 
-func (t *typedRepo[T]) GetOrCreate(ctx context.Context, aggID string, opts ...LoadOption) (a T, err error) {
+func (t *typedRepo[T]) Create(ctx context.Context, aggID string, opts ...SaveOption) (a T, err error) {
+	a = t.NewWithID(aggID)
+	err = a.Create(aggID)
+	if err != nil {
+		return a, err
+	}
+	err = t.Save(ctx, a, WithSnapshot(true), WithSaveOpts(opts...))
+	if err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+func (t *typedRepo[T]) GetOrCreate(ctx context.Context, aggID string, opts ...GetOrCreateOption) (a T, err error) {
 	if aggID == "" {
 		return a, errors.New("aggregate id is empty")
 	}
-	a = t.NewWithID(aggID)
-	err = t.r.Load(ctx, a, opts...)
-	if err != nil {
-		if errors.Is(err, ErrAggregateNotFound) {
-			err = a.Create(aggID)
-			if err != nil {
-				return a, err
-			}
-			err = t.Save(ctx, a, WithSnapshot(true))
-			if err != nil {
-				return a, err
-			}
 
-			t.log.Debug("created", slog.String("id", aggID))
-		} else {
-			return a, err
-		}
+	options := newGetOrCreateOptions(opts...)
+
+	a, err = t.GetByID(ctx, aggID, options.loadOpts...)
+	if err == nil {
+		return a, nil
 	}
-	return a, nil
+	if !errors.Is(err, ErrAggregateNotFound) {
+		return a, err
+	}
+	return t.Create(ctx, aggID, options.saveOpts...)
 }
 
 func (t *typedRepo[T]) GetByID(ctx context.Context, aggID string, opts ...LoadOption) (a T, err error) {
@@ -356,10 +355,14 @@ func (t *typedRepo[T]) GetByID(ctx context.Context, aggID string, opts ...LoadOp
 		return a, errors.New("aggregate id is empty")
 	}
 
+	options := newLoadOptions(WithLoadOpts(t.defaultLoadOpts...), WithLoadOpts(opts...))
+
 	// get from cache
-	cached, ok := t.cache.Get(aggID)
-	if ok {
-		return cached, nil
+	if options.useCache {
+		cached, ok := t.cache.Get(aggID)
+		if ok {
+			return cached, nil
+		}
 	}
 
 	a = t.NewWithID(aggID)
@@ -369,17 +372,22 @@ func (t *typedRepo[T]) GetByID(ctx context.Context, aggID string, opts ...LoadOp
 	}
 
 	// put to cache
-	t.cache.Put(aggID, a)
+	if options.useCache {
+		t.cache.Put(aggID, a)
+	}
 
 	return a, nil
 }
 
 func (t *typedRepo[T]) Save(ctx context.Context, agg T, opts ...SaveOption) (err error) {
+	options := newSaveOptions(WithSaveOpts(t.defaultSaveOpts...), WithSaveOpts(opts...))
 	err = t.r.Save(ctx, agg, opts...)
 	if err != nil {
 		return err
 	}
-	t.cache.Put(agg.GetID(), agg)
+	if options.useCache {
+		t.cache.Put(agg.GetID(), agg)
+	}
 	return nil
 }
 
@@ -395,8 +403,10 @@ func NewTypedRepository[T Aggregate](log *slog.Logger, s EventStore, reg *EventR
 func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository, opts ...RepositoryOption) TypedRepository[T] {
 	options := newRepoOpts(opts...)
 	return &typedRepo[T]{
-		r:     r,
-		log:   log.With(slog.String("repo", fmt.Sprintf("%T", *new(T)))),
-		cache: cache.NewTyped[T](options.cache),
+		r:               r,
+		log:             log.With(slog.String("repo", fmt.Sprintf("%T", *new(T)))),
+		cache:           cache.NewTyped[T](options.cache),
+		defaultLoadOpts: options.loadOpts,
+		defaultSaveOpts: options.saveOpts,
 	}
 }
