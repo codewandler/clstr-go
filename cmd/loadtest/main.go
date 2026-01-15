@@ -101,7 +101,7 @@ func main() {
 		env = createMemEnv(log)
 	}
 
-	var cacheOption es.RepoCacheOption = es.WithRepoCache(cache.NewNop())
+	var cacheOption = es.WithRepoCache(cache.NewNop())
 	if useCache {
 		cacheOption = es.WithRepoCacheLRU(1_000)
 	}
