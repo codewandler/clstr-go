@@ -286,12 +286,12 @@ type (
 		New() T
 		NewWithID(id string) T
 		Create(ctx context.Context, aggID string, opts ...SaveOption) (agg T, err error)
-		GetOrCreate(ctx context.Context, aggID string, opts ...GetOrCreateOption) (agg T, err error)
+		GetOrCreate(ctx context.Context, aggID string, opts ...LoadAndSaveOption) (agg T, err error)
 
 		// GetByID gets an aggregate by ID. If the aggregate does not exist, it is created.
 		GetByID(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
 
-		WithTransaction(ctx context.Context, aggID string, do func(T) error, opts ...GetOrCreateOption) error
+		WithTransaction(ctx context.Context, aggID string, do func(T) error, opts ...LoadAndSaveOption) error
 
 		Save(ctx context.Context, agg T, opts ...SaveOption) error
 	}
@@ -324,19 +324,25 @@ func (t *typedRepo[T]) NewWithID(id string) T {
 	return a
 }
 
-func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn func(T) error, opts ...GetOrCreateOption) error {
+func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn func(T) error, opts ...LoadAndSaveOption) error {
 	return t.pkTrans.Do(aggID, func() (err error) {
+		options := newGetOrCreateOptions(opts...)
+
+		// get item by ID
 		var a T
-		a, err = t.GetOrCreate(ctx, aggID, opts...)
+		a, err = t.GetByID(ctx, aggID, options.loadOpts...)
 		if err != nil {
 			return err
 		}
+
+		// call inner
 		err = fn(a)
 		if err != nil {
 			return err
 		}
 
-		err = t.Save(ctx, a, newGetOrCreateOptions(opts...).saveOpts...)
+		// persist
+		err = t.Save(ctx, a, options.saveOpts...)
 		if err != nil {
 			return err
 		}
@@ -357,7 +363,7 @@ func (t *typedRepo[T]) Create(ctx context.Context, aggID string, opts ...SaveOpt
 	return a, nil
 }
 
-func (t *typedRepo[T]) GetOrCreate(ctx context.Context, aggID string, opts ...GetOrCreateOption) (a T, err error) {
+func (t *typedRepo[T]) GetOrCreate(ctx context.Context, aggID string, opts ...LoadAndSaveOption) (a T, err error) {
 	if aggID == "" {
 		return a, errors.New("aggregate id is empty")
 	}

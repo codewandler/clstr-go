@@ -25,7 +25,7 @@ type (
 		useCache bool
 	}
 
-	repoGetOrCreateOptions struct {
+	repoLoadAndSaveOpts struct {
 		loadOpts []LoadOption
 		saveOpts []SaveOption
 	}
@@ -42,7 +42,7 @@ type (
 type (
 	SaveOption        interface{ applyToSaveOptions(*repoSaveOptions) }
 	LoadOption        interface{ applyToLoadOptions(*repoLoadOptions) }
-	GetOrCreateOption interface{ applyToGetOrCreateOptions(*repoGetOrCreateOptions) }
+	LoadAndSaveOption interface{ applyToGetOrCreateOptions(*repoLoadAndSaveOpts) }
 )
 
 func WithRepoCache(cache cache.Cache) RepoCacheOption { return RepoCacheOption{v: cache} }
@@ -116,17 +116,17 @@ func newLoadOptions(opts ...LoadOption) repoLoadOptions {
 
 // === getOrCreate ==
 
-func (o SnapshotOption) applyToGetOrCreateOptions(options *repoGetOrCreateOptions) {
+func (o SnapshotOption) applyToGetOrCreateOptions(options *repoLoadAndSaveOpts) {
 	options.loadOpts = append(options.loadOpts, o)
 	options.saveOpts = append(options.saveOpts)
 }
 
-func (o RepoUseCacheOption) applyToGetOrCreateOptions(options *repoGetOrCreateOptions) {
+func (o RepoUseCacheOption) applyToGetOrCreateOptions(options *repoLoadAndSaveOpts) {
 	options.loadOpts = append(options.loadOpts, o)
 }
 
-func newGetOrCreateOptions(opts ...GetOrCreateOption) repoGetOrCreateOptions {
-	options := repoGetOrCreateOptions{}
+func newGetOrCreateOptions(opts ...LoadAndSaveOption) repoLoadAndSaveOpts {
+	options := repoLoadAndSaveOpts{}
 	for _, opt := range opts {
 		opt.applyToGetOrCreateOptions(&options)
 	}
