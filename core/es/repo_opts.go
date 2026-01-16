@@ -54,7 +54,7 @@ type (
 	}
 )
 
-func WithCreate(create bool) RepoCreateOption         { return RepoCreateOption{v: create} }
+func WithCreate() RepoCreateOption                    { return RepoCreateOption{v: true} }
 func WithRepoCache(cache cache.Cache) RepoCacheOption { return RepoCacheOption{v: cache} }
 func WithRepoCacheLRU(size int) RepoCacheOption {
 	return WithRepoCache(cache.NewLRU(cache.LRUOpts{Size: size}))
