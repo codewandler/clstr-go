@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/codewandler/clstr-go/core/es"
@@ -12,16 +11,18 @@ import (
 )
 
 type CpStoreConfig struct {
-	Connect Connector
-	Bucket  string
+	Connect   Connector
+	Bucket    string
+	KeyPrefix string
 }
 
 type CpStore struct {
-	kv *KvStore
+	kv        *KvStore
+	keyPrefix string
 }
 
 func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
-	kv, err := NewKvStore(KvConfig{
+	kvStore, err := NewKvStore(KvConfig{
 		Bucket:  cfg.Bucket,
 		Connect: cfg.Connect,
 	})
@@ -29,11 +30,16 @@ func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
 		return nil, err
 	}
 
-	return &CpStore{kv: kv}, nil
+	keyPrefix := cfg.KeyPrefix
+	if keyPrefix == "" {
+		keyPrefix = "default"
+	}
+
+	return &CpStore{kv: kvStore}, nil
 }
 
 func (c *CpStore) getKey(projectionName, aggKey string) string {
-	return strings.Replace("proj-"+projectionName+"-"+aggKey, ":", "-", -1)
+	return fmt.Sprintf("%s-proj-%s-%s", c.keyPrefix, projectionName, aggKey)
 }
 
 func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {

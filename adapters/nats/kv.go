@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -73,7 +74,12 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 	return &KvStore{kv: natsKV}, nil
 }
 
+func (k *KvStore) sanitizedKey(key string) string {
+	return strings.Replace(key, ":", "-", -1)
+}
+
 func (k *KvStore) Put(ctx context.Context, key string, entry kv.Entry, opts kv.PutOptions) (err error) {
+	key = k.sanitizedKey(key)
 	_, err = k.kv.Put(ctx, key, entry.Data)
 	if err != nil {
 		return err
@@ -88,6 +94,7 @@ func (k *KvStore) Put(ctx context.Context, key string, entry kv.Entry, opts kv.P
 }
 
 func (k *KvStore) Get(ctx context.Context, key string) (entry kv.Entry, err error) {
+	key = k.sanitizedKey(key)
 	v, err := k.kv.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
