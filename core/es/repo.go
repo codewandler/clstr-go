@@ -291,7 +291,7 @@ type (
 		// GetByID gets an aggregate by ID. If the aggregate does not exist, it is created.
 		GetByID(ctx context.Context, aggID string, opts ...LoadOption) (T, error)
 
-		WithTransaction(ctx context.Context, aggID string, do func(T) error, opts ...LoadAndSaveOption) error
+		WithTransaction(ctx context.Context, aggID string, do func(T) error, opts ...WithTransactionOption) error
 
 		Save(ctx context.Context, agg T, opts ...SaveOption) error
 	}
@@ -324,13 +324,18 @@ func (t *typedRepo[T]) NewWithID(id string) T {
 	return a
 }
 
-func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn func(T) error, opts ...LoadAndSaveOption) error {
+func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn func(T) error, opts ...WithTransactionOption) error {
 	return t.pkTrans.Do(aggID, func() (err error) {
-		options := newGetOrCreateOptions(opts...)
+		options := newWithTransactionOptions(opts...)
 
 		// get item by ID
 		var a T
-		a, err = t.GetByID(ctx, aggID, options.loadOpts...)
+		if options.create {
+			a, err = t.GetOrCreate(ctx, aggID, WithLoadOpts(options.loadOpts...), WithSaveOpts(options.saveOpts...))
+		} else {
+			a, err = t.GetByID(ctx, aggID, options.loadOpts...)
+		}
+
 		if err != nil {
 			return err
 		}
