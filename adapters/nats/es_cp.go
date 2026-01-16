@@ -17,29 +17,24 @@ type CpStoreConfig struct {
 }
 
 type CpStore struct {
-	kv        *KvStore
-	keyPrefix string
+	kv *KvStore
 }
 
 func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
 	kvStore, err := NewKvStore(KvConfig{
-		Bucket:  cfg.Bucket,
-		Connect: cfg.Connect,
+		Bucket:    cfg.Bucket,
+		Connect:   cfg.Connect,
+		KeyPrefix: cfg.KeyPrefix,
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	keyPrefix := cfg.KeyPrefix
-	if keyPrefix == "" {
-		keyPrefix = "default"
 	}
 
 	return &CpStore{kv: kvStore}, nil
 }
 
 func (c *CpStore) getKey(projectionName, aggKey string) string {
-	return fmt.Sprintf("%s-proj-%s-%s", c.keyPrefix, projectionName, aggKey)
+	return fmt.Sprintf("proj-%s-%s", projectionName, aggKey)
 }
 
 func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {

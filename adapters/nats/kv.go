@@ -18,10 +18,12 @@ type KvConfig struct {
 	TTL          time.Duration
 	MaxBytes     int
 	MaxValueSize int
+	KeyPrefix    string
 }
 
 type KvStore struct {
-	kv jetstream.KeyValue
+	kv        jetstream.KeyValue
+	keyPrefix string
 }
 
 func NewKvStore(cfg KvConfig) (*KvStore, error) {
@@ -53,13 +55,8 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 		return nil, err
 	}
 
-	bucket := cfg.Bucket
-	if bucket == "" {
-		bucket = "es_checkpoint_store"
-	}
-
 	natsKV, err := js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
-		Bucket:         bucket,
+		Bucket:         cfg.Bucket,
 		Storage:        jetstream.FileStorage,
 		MaxBytes:       int64(cfg.MaxBytes),
 		MaxValueSize:   int32(cfg.MaxValueSize),
@@ -71,15 +68,19 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 		return nil, err
 	}
 
-	return &KvStore{kv: natsKV}, nil
+	return &KvStore{kv: natsKV, keyPrefix: cfg.KeyPrefix}, nil
 }
 
-func (k *KvStore) sanitizedKey(key string) string {
+func (k *KvStore) getKey(key string) string {
+	if k.keyPrefix != "" {
+		key = k.keyPrefix + "-" + key
+	}
+	// sanitize
 	return strings.Replace(key, ":", "-", -1)
 }
 
 func (k *KvStore) Put(ctx context.Context, key string, entry kv.Entry, opts kv.PutOptions) (err error) {
-	key = k.sanitizedKey(key)
+	key = k.getKey(key)
 	_, err = k.kv.Put(ctx, key, entry.Data)
 	if err != nil {
 		return err
@@ -94,7 +95,7 @@ func (k *KvStore) Put(ctx context.Context, key string, entry kv.Entry, opts kv.P
 }
 
 func (k *KvStore) Get(ctx context.Context, key string) (entry kv.Entry, err error) {
-	key = k.sanitizedKey(key)
+	key = k.getKey(key)
 	v, err := k.kv.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
