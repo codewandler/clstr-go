@@ -294,7 +294,7 @@ func (e *EventStore) Load(
 	if err != nil {
 		return nil, err
 	}
-	loadedEvents, err = e.consumeEvents(cc, endSeq)
+	loadedEvents, err = e.consumeEvents(ctx, cc, endSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -302,6 +302,7 @@ func (e *EventStore) Load(
 }
 
 func (e *EventStore) consumeEvents(
+	ctx context.Context,
 	cc jetstream.Consumer,
 	endSeq uint64,
 ) (loadedEvents []es.Envelope, err error) {
@@ -315,6 +316,11 @@ func (e *EventStore) consumeEvents(
 outer:
 
 	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 
 		mb, err = cc.FetchNoWait(100)
 		if err != nil {
