@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codewandler/clstr-go/internal/reflector"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+
+	"github.com/codewandler/clstr-go/internal/reflector"
 )
 
 type Env struct {
