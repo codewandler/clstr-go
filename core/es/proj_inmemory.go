@@ -18,41 +18,44 @@ type InMemoryProjectionState interface {
 }
 
 type InMemoryProjection[T InMemoryProjectionState] struct {
-	name        string
-	mu          sync.RWMutex
-	log         *slog.Logger
-	state       T
-	snapshotter Snapshotter
-	version     Version
+	name                       string
+	mu                         sync.RWMutex
+	log                        *slog.Logger
+	state                      T
+	snapshotter                Snapshotter
+	persistedLastSeq           uint64
+	persistedProjectionVersion Version
 }
 
-func (i *InMemoryProjection[T]) Name() string     { return i.name }
-func (i *InMemoryProjection[T]) Version() Version { return i.version }
+func (i *InMemoryProjection[T]) Name() string                { return i.name }
+func (i *InMemoryProjection[T]) GetLastSeq() (uint64, error) { return i.persistedLastSeq, nil }
 func (i *InMemoryProjection[T]) State() T {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.state
 }
 
-func (i *InMemoryProjection[T]) Handle(ctx context.Context, env Envelope, event any) error {
-	i.log.Debug("projection event", slog.Any("event", event))
+func (i *InMemoryProjection[T]) Handle(msgCtx MsgCtx) error {
+	ctx, env, event := msgCtx.Context(), msgCtx.Envelope(), msgCtx.Event()
+	i.log.Debug("projection event", slog.Uint64("seq", env.Seq), slog.Any("event", event))
 
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	updated, err := i.state.Apply(ctx, env, event)
 	if err != nil {
-
 		return err
 	}
 
-	if updated && i.snapshotter != nil {
+	// TODO: do periodic
+	if updated && i.snapshotter != nil && env.Seq%10 == 0 {
+		println("DO SNAPSHOT")
 		var data []byte
 		data, err = i.state.Snapshot()
 		if err != nil {
 			return err
 		}
-		nextVersion := i.version + 1
+		nextVersion := i.persistedProjectionVersion + 1
 		err = i.snapshotter.SaveSnapshot(ctx, Snapshot{
 			SnapshotID:    gonanoid.Must(),
 			ObjID:         i.name,
@@ -67,7 +70,13 @@ func (i *InMemoryProjection[T]) Handle(ctx context.Context, env Envelope, event 
 		if err != nil {
 			return fmt.Errorf("failed to create snapshot: %w", err)
 		}
-		i.log.Debug("saved snapshot", nextVersion.SlogAttr())
+		i.persistedLastSeq = env.Seq
+		i.persistedProjectionVersion = nextVersion
+		i.log.Debug(
+			"saved snapshot",
+			i.persistedProjectionVersion.SlogAttr(),
+			slog.Uint64("seq", i.persistedLastSeq),
+		)
 	}
 
 	return nil
@@ -114,8 +123,13 @@ func NewInMemoryProjection[T InMemoryProjectionState](
 			if err != nil {
 				return nil, err
 			}
-			p.version = s.ObjVersion
-			log.Debug("restored projection from snapshot", p.version.SlogAttr())
+			p.persistedProjectionVersion = s.ObjVersion
+			p.persistedLastSeq = s.StreamSeq
+			log.Debug(
+				"restored from snapshot",
+				p.persistedProjectionVersion.SlogAttr(),
+				slog.Uint64("seq", p.persistedLastSeq),
+			)
 		}
 	}
 

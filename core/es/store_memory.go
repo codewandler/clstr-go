@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -27,16 +28,17 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 		deliverPolicy: DeliverNewPolicy,
 		filters:       []SubscribeFilter{},
 	}
-
 	for _, opt := range opts {
 		opt(options)
 	}
 
+	s.log.Debug("subscribe", slog.Any("options", options))
+
 	// create subscription
 	subID := gonanoid.Must()
 	sub := &inMemorySubscription{
-		filters: options.filters,
-		ch:      make(chan Envelope, 1),
+		opts: *options,
+		ch:   make(chan Envelope, 1),
 		cancel: func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -51,25 +53,19 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 
 	//
 	if options.deliverPolicy == DeliverAllPolicy {
-		for k, _ := range s.streams {
-			go func(k string) {
-				s.mu.Lock()
-				defer s.mu.Unlock()
-				for _, e := range s.streams[k] {
-
-					if e.Seq < options.startSequence {
-						continue
-					}
-					if e.Version < options.startVersion {
-						continue
-					}
-
-					if matchFilters(e, sub.filters) {
-						sub.ch <- e
-					}
-				}
-			}(k)
+		allEvents := make([]Envelope, 0)
+		for _, events := range s.streams {
+			allEvents = append(allEvents, events...)
 		}
+		if len(allEvents) == 0 {
+			return sub, nil
+		}
+		sort.Slice(allEvents, func(i, j int) bool {
+			return allEvents[i].Seq < allEvents[j].Seq
+		})
+		sub.maxSeq = allEvents[len(allEvents)-1].Seq
+		go sub.dispatch(allEvents)
+
 	}
 
 	return sub, nil
@@ -80,19 +76,17 @@ func (s *InMemoryStore) dispatch(events []Envelope) {
 		return
 	}
 
-	s.log.Debug(
-		"dispatching events",
-		slog.Int("events", len(events)),
-		slog.Int("subscriptions", len(s.subs)),
-	)
+	var wg sync.WaitGroup
+	wg.Add(len(s.subs))
 
-	for _, e := range events {
-		for _, sub := range s.subs {
-			if matchFilters(e, sub.filters) {
-				sub.ch <- e
-			}
-		}
+	for _, sub := range s.subs {
+		go func(events []Envelope) {
+			defer wg.Done()
+			sub.dispatch(events)
+		}(events)
 	}
+
+	wg.Wait()
 }
 
 func NewInMemoryStore() *InMemoryStore {
@@ -202,12 +196,41 @@ func (s *InMemoryStore) Append(
 // === Subscription ===
 
 type inMemorySubscription struct {
-	filters []SubscribeFilter
-	ch      chan Envelope
-	cancel  context.CancelFunc
+	mu     sync.Mutex
+	opts   SubscribeOpts
+	ch     chan Envelope
+	cancel context.CancelFunc
+	maxSeq uint64
+}
+
+func (i *inMemorySubscription) MaxSequence() uint64 {
+	return i.maxSeq
 }
 
 func (i *inMemorySubscription) Chan() <-chan Envelope { return i.ch }
 func (i *inMemorySubscription) Cancel()               { i.cancel() }
+
+func (i *inMemorySubscription) dispatch(envelopes []Envelope) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	for _, e := range envelopes {
+		if e.Seq < i.opts.startSequence {
+			continue
+		}
+
+		if e.Version < i.opts.startVersion {
+			continue
+		}
+
+		if !matchFilters(e, i.opts.filters) {
+			continue
+		}
+
+		i.ch <- e
+	}
+}
+
+var _ Subscription = (*inMemorySubscription)(nil)
 
 var _ EventStore = (*InMemoryStore)(nil)

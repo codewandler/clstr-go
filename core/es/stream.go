@@ -59,6 +59,7 @@ func WithStartSequence(startSequence uint64) SubscribeOption {
 
 type Subscription interface {
 	Cancel()
+	MaxSequence() uint64
 	Chan() <-chan Envelope
 }
 

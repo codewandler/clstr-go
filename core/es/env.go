@@ -2,49 +2,28 @@ package es
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/codewandler/clstr-go/internal/reflector"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
-type EnvOption interface {
-	applyToEnv(*envOptions)
-}
-
-type envOptions struct {
-	ctx         context.Context
-	log         *slog.Logger
-	snapshotter Snapshotter
-	cpStore     CpStore
-	subCpStore  SubCpStore
-	store       EventStore
-	events      []EventRegisterOption
-	projections []Projection
-	aggregates  []Aggregate
-}
-
-func newEnvOptions(opts ...EnvOption) envOptions {
-	options := envOptions{
-		ctx:        context.Background(),
-		store:      NewInMemoryStore(),
-		cpStore:    NewInMemoryCpStore(),
-		subCpStore: NewInMemorySubCpStore(),
-	}
-	for _, opt := range opts {
-		opt.applyToEnv(&options)
-	}
-	return options
-}
-
 type Env struct {
-	ctx         context.Context
-	log         *slog.Logger
-	store       EventStore
-	cpStore     CpStore
-	subCpStore  SubCpStore
-	snapshotter Snapshotter
-	registry    *EventRegistry
-	pRunner     *ProjectionRunner
-	repo        Repository
+	ctx          context.Context
+	id           string
+	done         chan struct{}
+	shutdownOnce sync.Once
+	cancelCtx    context.CancelFunc
+	log          *slog.Logger
+	store        EventStore
+	snapshotter  Snapshotter
+	registry     *EventRegistry
+	repo         Repository
+	consumers    []*Consumer
 }
 
 func (e *Env) Repository() Repository   { return e.repo }
@@ -52,24 +31,33 @@ func (e *Env) Store() EventStore        { return e.store }
 func (e *Env) Snapshotter() Snapshotter { return e.snapshotter }
 
 func NewEnv(opts ...EnvOption) (e *Env, err error) {
-	options := newEnvOptions(opts...)
+	var (
+		id      = gonanoid.Must(6)
+		options = newEnvOptions(opts...)
+	)
+
+	// ctx
+	ctx := options.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// log
+	log := options.log
+	if log == nil {
+		log = slog.Default()
+	}
+	log = log.With(slog.String("env", id))
+
 	e = &Env{
-		ctx:         options.ctx,
-		log:         options.log,
+		log:         log,
 		store:       options.store,
-		cpStore:     options.cpStore,
-		subCpStore:  options.subCpStore,
 		snapshotter: options.snapshotter,
 		registry:    NewRegistry(),
+		done:        make(chan struct{}),
+		consumers:   make([]*Consumer, 0),
 	}
-
-	if e.log == nil {
-		e.log = slog.Default()
-	}
-
-	if e.ctx == nil {
-		e.ctx = context.Background()
-	}
+	e.ctx, e.cancelCtx = context.WithCancel(ctx)
 
 	for _, agg := range options.aggregates {
 		agg.Register(e.registry)
@@ -83,17 +71,6 @@ func NewEnv(opts ...EnvOption) (e *Env, err error) {
 		e.log.Debug("registered event", "type", s.t)
 	}
 
-	// register projections
-	e.pRunner = NewProjectionRunner(
-		e.log,
-		e.registry,
-		e.subCpStore,
-		e.cpStore,
-	)
-	for _, p := range options.projections {
-		e.pRunner.Register(p)
-	}
-
 	// create repository
 	e.repo = NewRepository(
 		e.log,
@@ -102,55 +79,75 @@ func NewEnv(opts ...EnvOption) (e *Env, err error) {
 		WithSnapshotter(e.snapshotter),
 	)
 
-	err = e.startProjections()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start projections: %w", err)
+	// start all consumers
+	for _, c := range options.consumers {
+		consumer := e.NewConsumer(c.handler, WithConsumerOpts(WithLog(e.log)), WithConsumerOpts(c.consumerOpts...))
+		if err := consumer.Start(e.ctx); err != nil {
+			return nil, fmt.Errorf("failed to start consumer: %w", err)
+		}
+		e.consumers = append(e.consumers, consumer)
 	}
+
+	context.AfterFunc(e.ctx, func() {
+		e.log.Info("shutting down")
+
+		e.log.Debug("stopping consumers", slog.Int("count", len(e.consumers)))
+		for _, c := range e.consumers {
+			c.Stop()
+		}
+
+		// we are done
+		e.log.Info("env shutdown")
+		close(e.done)
+	})
 
 	return e, nil
 }
 
-func (e *Env) startProjections() error {
-	e.log.Debug("starting projections...")
+func (e *Env) Shutdown() {
+	e.shutdownOnce.Do(func() {
+		e.cancelCtx()
+		<-e.done
+	})
+}
 
-	done := make(chan struct{})
+func (e *Env) NewConsumer(handler Handler, opts ...ConsumerOption) *Consumer {
+	return NewConsumer(e.store, e.registry, handler, WithLog(e.log), WithConsumerOpts(opts...))
+}
 
-	var startSeq uint64
-	var err error
-	startSeq, err = e.pRunner.GetStartSeq()
-	if err != nil {
-		return fmt.Errorf("failed to get subscription start sequence")
-	}
+func (e *Env) Append(ctx context.Context, expect Version, aggType string, aggID string, events ...any) error {
+	_, err := e.AppendWithResult(ctx, expect, aggType, aggID, events...)
+	return err
+}
 
-	sub, err := e.store.Subscribe(e.ctx, WithDeliverPolicy(DeliverAllPolicy), WithStartSequence(startSeq))
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to events: %w", err)
-	}
-
-	go func(sub Subscription) {
-		defer func() {
-			sub.Cancel()
-		}()
-
-		hdl := e.pRunner.Handler()
-
-		done <- struct{}{}
-
-		for {
-			select {
-			case <-e.ctx.Done():
-				return
-			case ev := <-sub.Chan():
-				err := hdl(e.ctx, []Envelope{ev})
-				if err != nil {
-					e.log.Error("projection handler failed", "err", err)
-				}
-			}
+func (e *Env) AppendWithResult(
+	ctx context.Context,
+	expect Version,
+	aggType string,
+	aggID string,
+	events ...any,
+) (*StoreAppendResult, error) {
+	envelopes := make([]Envelope, 0)
+	for i, ev := range events {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return nil, err
 		}
-	}(sub)
-
-	<-done
-
-	return nil
-
+		envelopes = append(envelopes, Envelope{
+			ID:            gonanoid.Must(),
+			Type:          reflector.TypeInfoOf(ev).Name,
+			AggregateID:   aggID,
+			AggregateType: aggType,
+			Data:          data,
+			OccurredAt:    time.Now(),
+			Version:       expect + Version(i+1),
+		})
+	}
+	return e.store.Append(
+		ctx,
+		aggType,
+		aggID,
+		expect,
+		envelopes,
+	)
 }

@@ -133,7 +133,7 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		aggType,
 		aggID,
 		WithStartAtVersion(minVersion),
-		WithStartAtSeq(minSeq),
+		WithStartSeq(minSeq),
 	)
 	if err != nil {
 		return err

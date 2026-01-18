@@ -11,7 +11,7 @@ var (
 
 type (
 	startVersionOption valueOption[Version]
-	startSeqOption     valueOption[uint64]
+	StartSeqOption     valueOption[uint64]
 
 	eventStoreLoadOptions struct {
 		startVersion Version
@@ -33,11 +33,11 @@ func (e *eventStoreLoadOptions) SetStartSeq(seq uint64)    { e.startSeq = seq }
 func WithStartAtVersion(startVersion Version) StoreLoadOption {
 	return startVersionOption{startVersion}
 }
-func WithStartAtSeq(startSeq uint64) StoreLoadOption { return startSeqOption{startSeq} }
+func WithStartSeq(startSeq uint64) StartSeqOption { return StartSeqOption{startSeq} }
 func (o startVersionOption) ApplyToStoreLoadOptions(receiver storeLoadOptionsReceiver) {
 	receiver.SetStartVersion(o.v)
 }
-func (o startSeqOption) ApplyToStoreLoadOptions(receiver storeLoadOptionsReceiver) {
+func (o StartSeqOption) ApplyToStoreLoadOptions(receiver storeLoadOptionsReceiver) {
 	receiver.SetStartSeq(o.v)
 }
 

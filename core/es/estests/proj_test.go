@@ -50,16 +50,15 @@ func TestProjection(t *testing.T) {
 		aggID         = "my-agg-1"
 		mySnapshotter = es.NewInMemorySnapshotter()
 		myStore       = es.NewInMemoryStore()
-		myCP          = es.NewInMemoryCpStore()
 	)
 
 	mainProj := createTestProjection(t, mySnapshotter)
 	te := es.NewTestEnv(
 		t,
+		es.WithLog(slog.Default()),
 		es.WithAggregates(new(domain.TestAgg)),
-		es.WithProjections(mainProj),
+		es.WithProjection(mainProj),
 		es.WithStore(myStore),
-		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
 	)
 
@@ -72,7 +71,10 @@ func TestProjection(t *testing.T) {
 	require.Equal(t, 5, a.Count())
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
-	<-time.After(100 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
+	require.Equal(t, 5, mainProj.State().V)
+	te.Shutdown()
+	<-time.After(40 * time.Millisecond)
 	require.Equal(t, 5, mainProj.State().V)
 
 	// next
@@ -80,20 +82,22 @@ func TestProjection(t *testing.T) {
 	te = es.NewTestEnv(
 		t,
 		es.WithAggregates(new(domain.TestAgg)),
-		es.WithProjections(mainProj),
+		es.WithProjection(mainProj),
 		es.WithStore(myStore),
-		es.WithCheckpointStore(myCP),
 		es.WithSnapshotter(mySnapshotter),
 	)
+
+	require.Equal(t, 5, mainProj.State().V)
 
 	repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
 	a, err = repo.GetByID(t.Context(), aggID)
 	require.NoError(t, err)
 	require.Equal(t, 5, a.Count())
+
 	require.NoError(t, a.IncBy(2))
 	require.Equal(t, 7, a.Count())
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
-	<-time.After(500 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 	require.Equal(t, 7, mainProj.State().V)
 }
