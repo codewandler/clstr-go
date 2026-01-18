@@ -1,10 +1,9 @@
 package estests
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,30 +13,36 @@ import (
 	"github.com/codewandler/clstr-go/core/es/estests/domain"
 )
 
-type myTestProjectionState struct {
-	V int
+type myTestProjection struct {
+	mu sync.RWMutex
+	V  int
 }
 
-func (m *myTestProjectionState) Snapshot() ([]byte, error) { return json.Marshal(m) }
-func (m *myTestProjectionState) Restore(data []byte) error { return json.Unmarshal(data, m) }
-func (m *myTestProjectionState) Apply(ctx context.Context, env es.Envelope, event any) (bool, error) {
-	switch e := event.(type) {
+func (m *myTestProjection) getValue() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.V
+}
+
+func (m *myTestProjection) Name() string                      { return "test_projection" }
+func (m *myTestProjection) Snapshot() ([]byte, error)         { return json.Marshal(m) }
+func (m *myTestProjection) RestoreSnapshot(data []byte) error { return json.Unmarshal(data, m) }
+func (m *myTestProjection) Handle(msgCtx es.MsgCtx) error {
+	switch e := msgCtx.Event().(type) {
 	case *domain.Incremented:
+		m.mu.Lock()
+		defer m.mu.Unlock()
 		m.V += int(e.Inc)
-		return true, nil
+		return nil
 	}
-	return false, nil
+	return nil
 }
 
-func createTestProjection(t *testing.T, s es.Snapshotter) *es.InMemoryProjection[*myTestProjectionState] {
-	state := &myTestProjectionState{}
-	myProj, err := es.NewInMemoryProjection[*myTestProjectionState](
-		es.InMemoryProjectionOpts{
-			Name:        fmt.Sprintf("%T", *new(myTestProjectionState)),
-			Snapshotter: s,
-			Log:         slog.Default(),
-		},
-		state,
+func createTestProjection(t *testing.T, s es.Snapshotter) *es.SnapshotProjection[*myTestProjection] {
+	pInner := &myTestProjection{}
+	myProj, err := es.NewSnapshotProjection[*myTestProjection](
+		pInner,
+		s,
 	)
 	require.NoError(t, err)
 	return myProj
@@ -72,10 +77,10 @@ func TestProjection(t *testing.T) {
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
 	<-time.After(50 * time.Millisecond)
-	require.Equal(t, 5, mainProj.State().V)
+	require.Equal(t, 5, mainProj.Projection().getValue())
 	te.Shutdown()
 	<-time.After(40 * time.Millisecond)
-	require.Equal(t, 5, mainProj.State().V)
+	require.Equal(t, 5, mainProj.Projection().getValue())
 
 	// next
 	mainProj = createTestProjection(t, mySnapshotter)
@@ -87,7 +92,7 @@ func TestProjection(t *testing.T) {
 		es.WithSnapshotter(mySnapshotter),
 	)
 
-	require.Equal(t, 5, mainProj.State().V)
+	require.Equal(t, 5, mainProj.Projection().getValue())
 
 	repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
 	a, err = repo.GetByID(t.Context(), aggID)
@@ -99,5 +104,5 @@ func TestProjection(t *testing.T) {
 	require.NoError(t, repo.Save(t.Context(), a, es.WithSnapshot(true)))
 
 	<-time.After(50 * time.Millisecond)
-	require.Equal(t, 7, mainProj.State().V)
+	require.Equal(t, 7, mainProj.Projection().getValue())
 }
