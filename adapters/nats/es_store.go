@@ -151,6 +151,16 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
+	maxSeq := 0
+	for _, s := range filterSubjects {
+		m, err := e.stream.GetLastMsgForSubject(ctx, s)
+		if err != nil && !errors.Is(err, jetstream.ErrMsgNotFound) {
+			return nil, fmt.Errorf("failed to get last message for subject %q: %w", s, err)
+		} else if err == nil {
+			maxSeq = max(maxSeq, int(m.Sequence))
+		}
+	}
+
 	ch := make(chan es.Envelope, 64)
 
 	consumerCfg := jetstream.ConsumerConfig{
@@ -218,7 +228,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		stop()
 	})
 
-	return &jsStoreSubscription{ch: ch, cancel: stop}, nil
+	return &jsStoreSubscription{ch: ch, cancel: stop, maxSeq: uint64(maxSeq)}, nil
 }
 
 func (e *EventStore) Load(
@@ -517,7 +527,11 @@ func (e *EventStore) subjectForAggregate(aggregateType, aggregateID string) stri
 type jsStoreSubscription struct {
 	ch     chan es.Envelope
 	cancel context.CancelFunc
+	maxSeq uint64
 }
 
+func (s *jsStoreSubscription) MaxSequence() uint64      { return s.maxSeq }
 func (s *jsStoreSubscription) Cancel()                  { s.cancel() }
 func (s *jsStoreSubscription) Chan() <-chan es.Envelope { return s.ch }
+
+var _ es.Subscription = (*jsStoreSubscription)(nil)

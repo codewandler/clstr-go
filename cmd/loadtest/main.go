@@ -65,7 +65,7 @@ type MyProjection struct {
 }
 
 func (m *MyProjection) Name() string { return "project_1" }
-func (m *MyProjection) Handle(ctx context.Context, env es.Envelope, event any) error {
+func (m *MyProjection) Handle(_ es.MsgCtx) error {
 	m.TotalEvents++
 	return nil
 }
@@ -98,7 +98,7 @@ func main() {
 			&natsTesting{ctx: context.Background(), log: log, cleanups: make([]func(), 0)},
 		)
 	default:
-		env = createMemEnv(log)
+		env = createMemEnv()
 	}
 
 	var cacheOption = es.WithRepoCache(cache.NewNop())
@@ -193,12 +193,12 @@ func getMemUsage() MemUsage {
 
 // === Env ===
 
-func createMemEnv(log *slog.Logger) (env *es.Env) {
+func createMemEnv() (env *es.Env) {
 	var err error
 	env, err = es.NewEnv(
 		es.WithInMemory(),
 		es.WithAggregates(new(User)),
-		es.WithProjections(&MyProjection{}, es.NewDebugProjection(log)),
+		es.WithProjection(&MyProjection{}, es.WithMiddlewares(es.NewLogMiddleware())),
 	)
 	checkErr(err)
 	return env
@@ -229,12 +229,6 @@ func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 
 	var cps es.CpStore
 	cps, err = nats.NewCpStore(nats.CpStoreConfig{
-		Bucket:  "loadtest_cps",
-		Connect: connectNats,
-	})
-
-	var subCps es.SubCpStore
-	subCps, err = nats.NewSubCpStore(nats.SubCpStoreConfig{
 		Bucket:  "loadtest_subcps",
 		Key:     "loadtest_subcps_key",
 		Connect: connectNats,
@@ -245,10 +239,10 @@ func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 	env, err = es.NewEnv(
 		es.WithStore(store),
 		es.WithSnapshotter(snapshotter),
-		es.WithSubCheckpointStore(subCps),
-		es.WithCheckpointStore(cps),
 		es.WithAggregates(new(User)),
-		es.WithProjections(&MyProjection{}, es.NewDebugProjection(log)),
+		es.WithProjection(&MyProjection{}, es.WithMiddlewares(
+			es.NewCheckpointMiddleware(cps),
+		)),
 	)
 	checkErr(err)
 	return env

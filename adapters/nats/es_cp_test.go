@@ -12,7 +12,7 @@ func TestES_Checkpoint(t *testing.T) {
 	connectNATS := NewTestContainer(t)
 
 	t.Run("sub checkpoint store", func(t *testing.T) {
-		cp, err := NewSubCpStore(SubCpStoreConfig{
+		cp, err := NewCpStore(CpStoreConfig{
 			Bucket:  "foo",
 			Key:     "dummy",
 			Connect: connectNATS,
@@ -33,7 +33,7 @@ func TestES_Checkpoint(t *testing.T) {
 
 	t.Run("checkpoint store", func(t *testing.T) {
 
-		cp, err := NewCpStore(CpStoreConfig{
+		cp, err := NewAggCpStore(AggCpStoreConfig{
 			Bucket:  "foo",
 			Connect: connectNATS,
 		})

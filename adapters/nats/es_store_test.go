@@ -149,7 +149,7 @@ func TestNats_EventStore_Load_Latency(t *testing.T) {
 
 	startAt := time.Now()
 	for i := 0; i < M; i++ {
-		events, err := store.Load(t.Context(), "test", aggID, es.WithStartAtSeq(uint64(R+1)))
+		events, err := store.Load(t.Context(), "test", aggID, es.WithStartSeq(uint64(R+1)))
 		require.NoError(t, err)
 		require.Equal(t, len(events), N-R)
 	}

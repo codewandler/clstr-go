@@ -10,17 +10,17 @@ import (
 	"github.com/codewandler/clstr-go/ports/kv"
 )
 
-type CpStoreConfig struct {
+type AggCpStoreConfig struct {
 	Connect   Connector
 	Bucket    string
 	KeyPrefix string
 }
 
-type CpStore struct {
+type AggCpStore struct {
 	kv *KvStore
 }
 
-func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
+func NewAggCpStore(cfg AggCpStoreConfig) (*AggCpStore, error) {
 	kvStore, err := NewKvStore(KvConfig{
 		Bucket:    cfg.Bucket,
 		Connect:   cfg.Connect,
@@ -30,14 +30,14 @@ func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
 		return nil, err
 	}
 
-	return &CpStore{kv: kvStore}, nil
+	return &AggCpStore{kv: kvStore}, nil
 }
 
-func (c *CpStore) getKey(projectionName, aggKey string) string {
+func (c *AggCpStore) getKey(projectionName, aggKey string) string {
 	return fmt.Sprintf("proj-%s-%s", projectionName, aggKey)
 }
 
-func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {
+func (c *AggCpStore) Get(projectionName, aggKey string) (lastVersion es.Version, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -51,45 +51,45 @@ func (c *CpStore) Get(projectionName, aggKey string) (lastVersion es.Version, er
 	return v, nil
 }
 
-func (c *CpStore) Set(projectionName, aggKey string, lastVersion es.Version) error {
+func (c *AggCpStore) Set(projectionName, aggKey string, lastVersion es.Version) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return kv.Put[es.Version](ctx, c.kv, c.getKey(projectionName, aggKey), lastVersion, kv.PutOptions{})
 }
 
-var _ es.CpStore = (*CpStore)(nil)
+var _ es.AggCpStore = (*AggCpStore)(nil)
 
 //
 
-type SubCpStoreConfig struct {
+type CpStoreConfig struct {
 	Connect Connector
 	Bucket  string
 	Key     string
 }
 
-type SubCpStore struct {
+type CpStore struct {
 	kv  *KvStore
 	key string
 }
 
-func NewSubCpStore(cfg SubCpStoreConfig) (*SubCpStore, error) {
+func NewCpStore(cfg CpStoreConfig) (*CpStore, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("bucket is required")
 	}
 	if cfg.Key == "" {
 		return nil, errors.New("key is required")
 	}
-	kv, err := NewKvStore(KvConfig{
+	kvStore, err := NewKvStore(KvConfig{
 		Bucket:  cfg.Bucket,
 		Connect: cfg.Connect,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &SubCpStore{kv: kv, key: cfg.Key}, nil
+	return &CpStore{kv: kvStore, key: cfg.Key}, nil
 }
 
-func (s *SubCpStore) Get() (lastSeq uint64, err error) {
+func (s *CpStore) Get() (lastSeq uint64, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -103,10 +103,10 @@ func (s *SubCpStore) Get() (lastSeq uint64, err error) {
 	return lastSeq, nil
 }
 
-func (s *SubCpStore) Set(lastSeq uint64) error {
+func (s *CpStore) Set(lastSeq uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return kv.Put[uint64](ctx, s.kv, s.key, lastSeq, kv.PutOptions{})
 }
 
-var _ es.SubCpStore = (*SubCpStore)(nil)
+var _ es.CpStore = (*CpStore)(nil)
