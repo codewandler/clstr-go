@@ -34,11 +34,28 @@ type SnapshotProjection[T SnapshottableProjection] struct {
 	persistedProjectionVersion Version
 }
 
-func (p *SnapshotProjection[T]) Start(ctx context.Context) error    { return p.restore(ctx) }
-func (p *SnapshotProjection[T]) Shutdown(ctx context.Context) error { return nil }
-func (p *SnapshotProjection[T]) Projection() T                      { return p.inner }
-func (p *SnapshotProjection[T]) Name() string                       { return p.inner.Name() }
-func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error)        { return p.persistedLastSeq, nil }
+func (p *SnapshotProjection[T]) Start(ctx context.Context) error {
+	if err := p.restore(ctx); err != nil {
+		return err
+	}
+
+	if lc, ok := any(p.inner).(HandlerLifecycle); ok {
+		return lc.Start(ctx)
+	}
+
+	return nil
+}
+
+func (p *SnapshotProjection[T]) Shutdown(ctx context.Context) error {
+	if lc, ok := any(p.inner).(HandlerLifecycle); ok {
+		return lc.Shutdown(ctx)
+	}
+	return nil
+}
+
+func (p *SnapshotProjection[T]) Projection() T               { return p.inner }
+func (p *SnapshotProjection[T]) Name() string                { return p.inner.Name() }
+func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error) { return p.persistedLastSeq, nil }
 
 func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
 	seq := msgCtx.Seq()
