@@ -55,9 +55,10 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 		return fmt.Errorf("failed to decode event: %w", err)
 	}
 	msgCtx := MsgCtx{
-		ctx: ctx,
-		ev:  ev,
-		evt: evt,
+		ctx:  ctx,
+		ev:   ev,
+		evt:  evt,
+		live: c.isLive.Load(),
 		log: c.log.With(
 			slog.Group(
 				"event",
