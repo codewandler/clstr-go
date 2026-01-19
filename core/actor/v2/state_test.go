@@ -41,5 +41,8 @@ func TestState_JSON(t *testing.T) {
 
 	require.NoError(t, json.Unmarshal([]byte(`{"value": 23}`), s))
 	require.Equal(t, 23, Read[Data, int](s, func(d *Data) int { return d.Value }))
+	s.Process(func(d *Data) {
+		require.Equal(t, 23, d.Value)
+	})
 
 }

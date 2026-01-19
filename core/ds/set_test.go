@@ -8,18 +8,27 @@ import (
 )
 
 func TestSet_Json(t *testing.T) {
-	s := NewStringSet("hello", "world", "!")
+	t.Run("marshal", func(t *testing.T) {
+		s := NewStringSet("hello", "world", "!")
 
-	var data []byte
+		var data []byte
 
-	data, _ = json.Marshal(&s)
-	require.Equal(t, `["hello","world","!"]`, string(data))
+		data, _ = json.Marshal(&s)
+		require.Equal(t, `["hello","world","!"]`, string(data))
 
-	data, _ = json.Marshal(s)
-	require.Equal(t, `["hello","world","!"]`, string(data))
+		data, _ = json.Marshal(s)
+		require.Equal(t, `["hello","world","!"]`, string(data))
 
-	data, _ = json.Marshal(*s)
-	require.Equal(t, `["hello","world","!"]`, string(data))
+		data, _ = json.Marshal(*s)
+		require.Equal(t, `["hello","world","!"]`, string(data))
+	})
+
+	t.Run("unmarshal", func(t *testing.T) {
+		var s *Set[string]
+		_ = json.Unmarshal([]byte(`["hello","world","!"]`), &s)
+		require.Equal(t, NewStringSet("hello", "world", "!"), s)
+	})
+
 }
 
 func TestSet_AddRemove(t *testing.T) {

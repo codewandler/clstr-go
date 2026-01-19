@@ -42,6 +42,8 @@ func NewMap[T MapFactory[T]]() *Map[T] {
 	return &Map[T]{d: make(map[string]*T)}
 }
 
-func (i *Map[T]) MarshalJSON() ([]byte, error) {
-	return json.Marshal(i.d)
+func (i *Map[T]) MarshalJSON() ([]byte, error) { return json.Marshal(i.d) }
+func (i *Map[T]) UnmarshalJSON(data []byte) error {
+	i.d = make(map[string]*T)
+	return json.Unmarshal(data, &i.d)
 }
