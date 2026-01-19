@@ -67,6 +67,13 @@ func (s *State[T]) MarshalJSON() ([]byte, error) {
 	return v.data, v.err
 }
 
+func (s *State[T]) UnmarshalJSON(data []byte) error {
+	errChan := make(chan error, 1)
+	s.Process(func(t *T) { errChan <- json.Unmarshal(data, t) })
+	return <-errChan
+
+}
+
 func (s *State[T]) Process(ops ...StateOp[T]) {
 	done := make(chan struct{})
 	s.tasks <- writeTask[T]{ops: ops, done: done}
