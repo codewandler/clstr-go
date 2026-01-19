@@ -36,7 +36,7 @@ func TestSnapshot(t *testing.T) {
 			store := es.NewInMemoryStore()
 
 			aggID := gonanoid.Must()
-			te := es.NewTestEnv(t, es.WithStore(store), es.WithSnapshotter(s), es.WithAggregates(new(domain.TestAgg)))
+			te := es.StartTestEnv(t, es.WithStore(store), es.WithSnapshotter(s), es.WithAggregates(new(domain.TestAgg)))
 			repo := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
 
 			// init
@@ -66,7 +66,7 @@ func TestSnapshot(t *testing.T) {
 			require.Equal(t, es.Version(4), a.GetVersion())
 
 			// new run
-			te2 := es.NewTestEnv(t, es.WithStore(store), es.WithSnapshotter(s), es.WithAggregates(new(domain.TestAgg)))
+			te2 := es.StartTestEnv(t, es.WithStore(store), es.WithSnapshotter(s), es.WithAggregates(new(domain.TestAgg)))
 			repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te2.Repository())
 
 			// load with snapshot

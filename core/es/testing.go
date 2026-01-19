@@ -18,16 +18,16 @@ func (e *TestingEnv) Assert() *TestingEnvAssert {
 	return &TestingEnvAssert{env: e}
 }
 
-func NewTestEnv(
+func StartTestEnv(
 	t *testing.T,
 	opts ...EnvOption,
 ) *TestingEnv {
-	e, err := NewEnv(
+	e := NewEnv(
 		WithSnapshotter(NewInMemorySnapshotter()),
 		WithStore(NewInMemoryStore()),
 		WithEnvOpts(opts...),
 	)
-	require.NoError(t, err)
+	require.NoError(t, e.Start())
 	return &TestingEnv{
 		t:   t,
 		Env: e,

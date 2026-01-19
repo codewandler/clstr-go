@@ -67,7 +67,7 @@ func TestProjection_InMemory(t *testing.T) {
 	require.Equal(t, 0, p.Projection().GetValue())
 	require.Equal(t, "test_proj", p.Name())
 
-	te := NewTestEnv(
+	te := StartTestEnv(
 		t,
 		WithCtx(t.Context()),
 		WithStore(store),
@@ -112,7 +112,7 @@ func TestProjection_InMemory(t *testing.T) {
 	require.Equal(t, uint64(10), ls)
 	require.Equal(t, 50, p.Projection().GetValue())
 
-	te = NewTestEnv(
+	te = StartTestEnv(
 		t,
 		WithStore(store),
 		WithProjection(p),

@@ -16,7 +16,7 @@ func TestConsumer(t *testing.T) {
 
 	rcv := make(chan es.MsgCtx, 1)
 
-	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	c := te.NewConsumer(
 		es.Handle(func(m es.MsgCtx) error {
 			rcv <- m
@@ -46,7 +46,7 @@ func TestConsumer_WithCheckpoint(t *testing.T) {
 
 	rcv := make(chan es.MsgCtx, 1)
 
-	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	cp := es.NewInMemCpStore()
 	_ = cp.Set(5)
 
@@ -77,7 +77,7 @@ func TestConsumer_WithCheckpoint(t *testing.T) {
 
 func TestConsumer_WithConsumer(t *testing.T) {
 	done := make(chan struct{})
-	te := es.NewTestEnv(
+	te := es.StartTestEnv(
 		t,
 		es.WithAggregates(new(domain.TestAgg)),
 		es.WithConsumer(

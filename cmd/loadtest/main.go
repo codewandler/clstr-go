@@ -194,14 +194,11 @@ func getMemUsage() MemUsage {
 // === Env ===
 
 func createMemEnv() (env *es.Env) {
-	var err error
-	env, err = es.NewEnv(
+	return es.NewEnv(
 		es.WithInMemory(),
 		es.WithAggregates(new(User)),
 		es.WithProjection(&MyProjection{}, es.WithMiddlewares(es.NewLogMiddleware())),
 	)
-	checkErr(err)
-	return env
 }
 
 func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
@@ -236,7 +233,7 @@ func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 
 	// === wire env ===
 
-	env, err = es.NewEnv(
+	return es.NewEnv(
 		es.WithStore(store),
 		es.WithSnapshotter(snapshotter),
 		es.WithAggregates(new(User)),
@@ -244,8 +241,6 @@ func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 			es.NewCheckpointMiddleware(cps),
 		)),
 	)
-	checkErr(err)
-	return env
 }
 
 // === Domain ===

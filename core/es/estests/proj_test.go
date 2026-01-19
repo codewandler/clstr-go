@@ -59,7 +59,7 @@ func TestProjection(t *testing.T) {
 	)
 
 	mainProj := createTestProjection(t, mySnapshotter)
-	te := es.NewTestEnv(
+	te := es.StartTestEnv(
 		t,
 		es.WithLog(slog.Default()),
 		es.WithAggregates(new(domain.TestAgg)),
@@ -85,7 +85,7 @@ func TestProjection(t *testing.T) {
 
 	// next
 	mainProj = createTestProjection(t, mySnapshotter)
-	te = es.NewTestEnv(
+	te = es.StartTestEnv(
 		t,
 		es.WithAggregates(new(domain.TestAgg)),
 		es.WithProjection(mainProj),

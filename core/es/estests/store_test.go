@@ -94,7 +94,7 @@ func eachStore(testFunc TestFunc) func(t *testing.T) {
 				testFunc(
 					t,
 					func(opts ...es.EnvOption) *es.TestingEnv {
-						return es.NewTestEnv(
+						return es.StartTestEnv(
 							t,
 							es.WithSnapshotter(sut.snapshotter),
 							es.WithStore(sut.store),

@@ -31,7 +31,7 @@ func (e *Env) Repository() Repository   { return e.repo }
 func (e *Env) Store() EventStore        { return e.store }
 func (e *Env) Snapshotter() Snapshotter { return e.snapshotter }
 
-func NewEnv(opts ...EnvOption) (e *Env, err error) {
+func NewEnv(opts ...EnvOption) (e *Env) {
 	var (
 		id      = gonanoid.Must(6)
 		options = newEnvOptions(opts...)
@@ -80,13 +80,9 @@ func NewEnv(opts ...EnvOption) (e *Env, err error) {
 		WithSnapshotter(e.snapshotter),
 	)
 
-	// start all consumers
+	// build consumers
 	for _, c := range options.consumers {
-		consumer := e.NewConsumer(c.handler, WithConsumerOpts(WithLog(e.log)), WithConsumerOpts(c.consumerOpts...))
-		if err := consumer.Start(e.ctx); err != nil {
-			return nil, fmt.Errorf("failed to start consumer: %w", err)
-		}
-		e.consumers = append(e.consumers, consumer)
+		e.consumers = append(e.consumers, e.NewConsumer(c.handler, WithConsumerOpts(WithLog(e.log)), WithConsumerOpts(c.consumerOpts...)))
 	}
 
 	context.AfterFunc(e.ctx, func() {
@@ -102,7 +98,18 @@ func NewEnv(opts ...EnvOption) (e *Env, err error) {
 		close(e.done)
 	})
 
-	return e, nil
+	return e
+}
+
+func (e *Env) Start() (err error) {
+	// start all consumers
+	for _, c := range e.consumers {
+		if err := c.Start(e.ctx); err != nil {
+			return fmt.Errorf("failed to start consumer: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (e *Env) Shutdown() {

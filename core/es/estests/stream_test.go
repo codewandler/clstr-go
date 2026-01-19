@@ -15,7 +15,7 @@ import (
 func TestStream(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	et := es.NewTestEnv(
+	et := es.StartTestEnv(
 		t,
 		es.WithInMemory(),
 		es.WithSnapshotter(es.NewInMemorySnapshotter()),

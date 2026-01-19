@@ -15,13 +15,13 @@ import (
 )
 
 func TestRepository(t *testing.T) {
-	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	a := domain.NewTestAgg("foobar")
 	require.ErrorIs(t, te.Repository().Load(t.Context(), a), es.ErrAggregateNotFound)
 }
 
 func TestRepository_Typed_notFound(t *testing.T) {
-	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	r := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository())
 	_, err := r.GetByID(t.Context(), "foobar")
 	require.ErrorIs(t, err, es.ErrAggregateNotFound)
@@ -29,7 +29,7 @@ func TestRepository_Typed_notFound(t *testing.T) {
 
 func TestRepository_Typed(t *testing.T) {
 	var (
-		e    = es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+		e    = es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 		repo = es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), e.Repository())
 	)
 
@@ -82,7 +82,7 @@ func TestRepository_Typed(t *testing.T) {
 }
 
 func TestRepository_Concurrency(t *testing.T) {
-	te := es.NewTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
+	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	r := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), te.Repository(), es.WithRepoCacheLRU(100))
 
 	t.Run("transactions", func(t *testing.T) {
