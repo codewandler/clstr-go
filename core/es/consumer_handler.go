@@ -1,12 +1,19 @@
 package es
 
 import (
+	"context"
 	"log/slog"
 	"time"
 )
 
 type (
-	Handler              interface{ Handle(msgCtx MsgCtx) error }
+	Handler interface {
+		Handle(msgCtx MsgCtx) error
+	}
+	HandlerLifecycle interface {
+		Start(ctx context.Context) error
+		Shutdown(ctx context.Context) error
+	}
 	HandleFunc           func(ctx MsgCtx) error
 	HandlerMiddleware    func(next Handler) Handler
 	MiddlewareHandleFunc func(ctx MsgCtx, next Handler) error

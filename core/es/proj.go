@@ -34,9 +34,11 @@ type SnapshotProjection[T SnapshottableProjection] struct {
 	persistedProjectionVersion Version
 }
 
-func (p *SnapshotProjection[T]) Projection() T               { return p.inner }
-func (p *SnapshotProjection[T]) Name() string                { return p.inner.Name() }
-func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error) { return p.persistedLastSeq, nil }
+func (p *SnapshotProjection[T]) Start(ctx context.Context) error    { return p.restore(ctx) }
+func (p *SnapshotProjection[T]) Shutdown(ctx context.Context) error { return nil }
+func (p *SnapshotProjection[T]) Projection() T                      { return p.inner }
+func (p *SnapshotProjection[T]) Name() string                       { return p.inner.Name() }
+func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error)        { return p.persistedLastSeq, nil }
 
 func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
 	seq := msgCtx.Seq()
@@ -89,10 +91,8 @@ func (p *SnapshotProjection[T]) snapshot(msgCtx MsgCtx) (err error) {
 	return nil
 }
 
-func (p *SnapshotProjection[T]) restore() error {
-	p.log.Debug("restoring projection state")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (p *SnapshotProjection[T]) restore(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	s, err := p.snapshotter.LoadSnapshot(ctx, "projection", p.Name())
@@ -100,7 +100,7 @@ func (p *SnapshotProjection[T]) restore() error {
 		if errors.Is(err, ErrSnapshotNotFound) {
 			return nil
 		}
-		return fmt.Errorf("failed to load snapshot: %w", err)
+		return fmt.Errorf("failed to restore snapshot projection: %w", err)
 	}
 
 	p.log.Debug("restoring snapshot", s.ObjVersion.SlogAttrWithKey("snapshot_version"))
@@ -131,10 +131,6 @@ func NewSnapshotProjection[T SnapshottableProjection](
 		snapshotter: snapshotter,
 		inner:       innerProjection,
 		log:         log.With(slog.String("projection", innerProjection.Name())),
-	}
-
-	if err := p.restore(); err != nil {
-		return nil, err
 	}
 
 	return p, nil

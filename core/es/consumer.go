@@ -79,8 +79,14 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 }
 
 func (c *Consumer) Start(ctx context.Context) error {
-
 	c.log.Info("starting event consumer", slog.String("handler", fmt.Sprintf("%T", c.handler)))
+
+	if lc, ok := c.handler.(HandlerLifecycle); ok {
+		if err := lc.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start consumer lifecycle: %w", err)
+		}
+		c.log.Debug("handler started")
+	}
 
 	var lastSeenSeq uint64 = 0
 	if cp, ok := c.handler.(Checkpoint); ok {
@@ -111,6 +117,13 @@ func (c *Consumer) Start(ctx context.Context) error {
 	go func() {
 		defer func() {
 			sub.Cancel()
+			if lc, ok := c.handler.(HandlerLifecycle); ok {
+				shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				if err := lc.Shutdown(shutdownCtx); err != nil {
+					c.log.Error("failed to shutdown consumer lifecycle", slog.Any("error", err))
+				}
+			}
 			c.log.Info("stopped")
 			close(c.done)
 		}()

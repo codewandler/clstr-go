@@ -71,7 +71,6 @@ func TestProjection_InMemory(t *testing.T) {
 		t,
 		WithCtx(t.Context()),
 		WithStore(store),
-
 		WithProjection(p),
 		WithEvent[myProjTestEvent](),
 	)
@@ -94,23 +93,8 @@ func TestProjection_InMemory(t *testing.T) {
 	require.Equal(t, 1, int(p.persistedProjectionVersion))
 	te.Shutdown()
 
-	// TODO: configure how often snapshot is being created
-	// TODO: maybe snapshots should be done in background, periodically
-
-	/*p2 := newP()
-	require.Equal(t, 60, p2.State().Counter)*/
-
-	// TODO: start a new env, make sure projection is loaded from snapshot
-	// and that events from checkpoint store are applied from the right offset
-
-	println("---NEW---")
-
 	p = newP()
 	require.NotNil(t, p)
-	require.Equal(t, 1, int(p.persistedProjectionVersion))
-	ls, _ = p.GetLastSeq()
-	require.Equal(t, uint64(10), ls)
-	require.Equal(t, 50, p.Projection().GetValue())
 
 	te = StartTestEnv(
 		t,
@@ -118,6 +102,11 @@ func TestProjection_InMemory(t *testing.T) {
 		WithProjection(p),
 		WithEvent[myProjTestEvent](),
 	)
+
+	require.Equal(t, 1, int(p.persistedProjectionVersion))
+	ls, _ = p.GetLastSeq()
+	require.Equal(t, uint64(10), ls)
+	require.Equal(t, 60, p.Projection().GetValue())
 
 	require.NoError(t, te.Append(
 		t.Context(),
