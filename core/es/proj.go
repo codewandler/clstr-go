@@ -38,7 +38,7 @@ func (p *SnapshotProjection[T]) Name() string                { return p.inner.Na
 func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error) { return p.persistedLastSeq, nil }
 
 func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
-	ctx, env, event := msgCtx.Context(), msgCtx.Envelope(), msgCtx.Event()
+	seq, env, event := msgCtx.Seq(), msgCtx.Envelope(), msgCtx.Event()
 
 	msgCtx.Log().Debug("projection event", slog.Uint64("seq", env.Seq), slog.Any("event", event))
 
@@ -47,38 +47,46 @@ func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
 		return err
 	}
 
-	// TODO: do periodic
-	if env.Seq%10 == 0 {
-
-		var data []byte
-		data, err = p.inner.Snapshot()
+	if seq%10 == 0 {
+		err = p.snapshot(msgCtx)
 		if err != nil {
 			return err
 		}
-		nextVersion := p.persistedProjectionVersion + 1
-		err = p.snapshotter.SaveSnapshot(ctx, Snapshot{
-			SnapshotID:    gonanoid.Must(),
-			ObjID:         p.Name(),
-			ObjType:       "projection",
-			ObjVersion:    nextVersion,
-			StreamSeq:     env.Seq,
-			CreatedAt:     time.Now(),
-			SchemaVersion: 0,
-			Encoding:      "json",
-			Data:          data,
-		}, SnapshotSaveOpts{})
-		if err != nil {
-			return fmt.Errorf("failed to create snapshot: %w", err)
-		}
-		p.persistedLastSeq = env.Seq
-		p.persistedProjectionVersion = nextVersion
-		msgCtx.Log().Debug(
-			"saved snapshot",
-			p.persistedProjectionVersion.SlogAttr(),
-			slog.Uint64("seq", p.persistedLastSeq),
-		)
 	}
 
+	return nil
+}
+
+func (p *SnapshotProjection[T]) snapshot(msgCtx MsgCtx) (err error) {
+	ctx, env := msgCtx.Context(), msgCtx.Envelope()
+
+	var data []byte
+	data, err = p.inner.Snapshot()
+	if err != nil {
+		return err
+	}
+	nextVersion := p.persistedProjectionVersion + 1
+	err = p.snapshotter.SaveSnapshot(ctx, Snapshot{
+		SnapshotID:    gonanoid.Must(),
+		ObjID:         p.Name(),
+		ObjType:       "projection",
+		ObjVersion:    nextVersion,
+		StreamSeq:     env.Seq,
+		CreatedAt:     time.Now(),
+		SchemaVersion: 0,
+		Encoding:      "json",
+		Data:          data,
+	}, SnapshotSaveOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %w", err)
+	}
+	p.persistedLastSeq = env.Seq
+	p.persistedProjectionVersion = nextVersion
+	msgCtx.Log().Debug(
+		"snapshot created",
+		p.persistedProjectionVersion.SlogAttrWithKey("snapshot_version"),
+		slog.Uint64("seq", p.persistedLastSeq),
+	)
 	return nil
 }
 
