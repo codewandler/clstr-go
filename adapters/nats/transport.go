@@ -22,10 +22,9 @@ type TransportConfig struct {
 }
 
 type Transport struct {
-	nc      *natsgo.Conn
-	closeNc closeFunc
-	log     *slog.Logger
-	prefix  string
+	nc     *natsgo.Conn
+	log    *slog.Logger
+	prefix string
 
 	mu   sync.Mutex
 	subs map[*natsgo.Subscription]struct{}
@@ -50,17 +49,16 @@ func NewTransport(cfg TransportConfig) (*Transport, error) {
 		log = slog.Default()
 	}
 
-	nc, closeNc, err := connFn()
+	nc, err := connFn()
 	if err != nil {
 		return nil, err
 	}
 
 	t := &Transport{
-		nc:      nc,
-		closeNc: closeNc,
-		log:     log.With(slog.String("transport", "nats")),
-		prefix:  cfg.SubjectPrefix,
-		subs:    make(map[*natsgo.Subscription]struct{}),
+		nc:     nc,
+		log:    log.With(slog.String("transport", "nats")),
+		prefix: cfg.SubjectPrefix,
+		subs:   make(map[*natsgo.Subscription]struct{}),
 	}
 
 	return t, nil
@@ -135,15 +133,12 @@ func (t *Transport) Close() error {
 	t.subs = map[*natsgo.Subscription]struct{}{}
 	t.mu.Unlock()
 	if t.nc != nil {
-		t.nc.Drain()
-		t.closeNc()
+		if err := t.nc.Drain(); err != nil {
+			t.log.Error("nats: drain failed", slog.Any("error", err))
+		}
+		t.nc.Close()
 	}
 	return nil
-}
-
-// Close allows tests to call Close with a context, but it simply proxies to Close().
-func (t *Transport) CloseContext(_ context.Context) error { // helper, not part of interface
-	return t.Close()
 }
 
 // SubscribeShard subscribes to messages for a specific shard.

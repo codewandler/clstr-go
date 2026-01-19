@@ -39,7 +39,6 @@ type EventStoreConfig struct {
 
 type EventStore struct {
 	nc            *natsgo.Conn
-	closeNc       closeFunc
 	js            jetstream.JetStream
 	stream        jetstream.Stream
 	log           *slog.Logger
@@ -54,7 +53,7 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 		doConnect = ConnectDefault()
 	}
 
-	nc, closeNatsCon, err := doConnect()
+	nc, err := doConnect()
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +115,6 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 	return &EventStore{
 		nc:            nc,
-		closeNc:       closeNatsCon,
 		js:            js,
 		log:           log,
 		stream:        stream,
@@ -128,7 +126,7 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 func (e *EventStore) Close() error {
 	e.js.CleanupPublisher()
-	e.closeNc()
+	e.nc.Close()
 	e.log.Debug("closed event store")
 	return nil
 }

@@ -45,7 +45,7 @@ func NewKvStore(cfg KvConfig) (*KvStore, error) {
 		doConnect = ConnectDefault()
 	}
 
-	nc, _, err := doConnect()
+	nc, err := doConnect()
 	if err != nil {
 		return nil, err
 	}

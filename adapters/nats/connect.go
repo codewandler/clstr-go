@@ -1,25 +1,46 @@
 package nats
 
 import (
+	"log/slog"
 	"os"
+	"time"
 
 	natsgo "github.com/nats-io/nats.go"
 )
 
 type closeFunc = func()
 
-type Connector func() (nc *natsgo.Conn, close closeFunc, err error)
+type Connector func() (nc *natsgo.Conn, err error)
+
+var natsLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelDebug,
+}))
+
+var connectOpts = []natsgo.Option{
+	natsgo.MaxReconnects(-1),
+	natsgo.ReconnectWait(2 * time.Second),
+	natsgo.Timeout(2 * time.Second),
+	natsgo.DisconnectErrHandler(func(nc *natsgo.Conn, err error) {
+		natsLog.Warn("disconnected", slog.Any("error", err))
+	}),
+	natsgo.ReconnectHandler(func(nc *natsgo.Conn) {
+		natsLog.Info("reconnected")
+	}),
+	natsgo.ClosedHandler(func(nc *natsgo.Conn) {
+		natsLog.Info("closed")
+	}),
+}
 
 func ConnectURL(natsURL string) Connector {
-	return func() (*natsgo.Conn, closeFunc, error) {
+	return func() (*natsgo.Conn, error) {
 		nc, err := natsgo.Connect(
 			natsURL,
-			natsgo.MaxReconnects(3),
+			connectOpts...,
 		)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		return nc, func() { nc.Close() }, nil
+		return nc, nil
 	}
 }
 

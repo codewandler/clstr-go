@@ -87,7 +87,7 @@ func TestActor_publish_err(t *testing.T) {
 }
 
 func TestActor_scheduler(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 550*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 1025*time.Millisecond)
 	defer cancel()
 
 	c1 := atomic.Int32{}
@@ -107,6 +107,6 @@ func TestActor_scheduler(t *testing.T) {
 
 	<-ctx.Done()
 
-	require.Equal(t, int32(5), c1.Load())
-	require.Equal(t, int32(10), c2.Load())
+	require.Equal(t, int32(10), c1.Load())
+	require.Equal(t, int32(20), c2.Load())
 }
