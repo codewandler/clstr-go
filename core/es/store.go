@@ -2,7 +2,12 @@ package es
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
+
+	"github.com/codewandler/clstr-go/internal/reflector"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 var (
@@ -53,3 +58,39 @@ type (
 		Append(ctx context.Context, aggType string, aggID string, expectedVersion Version, events []Envelope) (*StoreAppendResult, error)
 	}
 )
+
+func AppendEvents(
+	ctx context.Context,
+	store EventStore,
+	aggType string,
+	aggID string,
+	expect Version,
+	events ...any,
+) (*StoreAppendResult, error) {
+	if events == nil || len(events) == 0 {
+		return nil, ErrStoreNoEvents
+	}
+	envelopes := make([]Envelope, 0)
+	for i, ev := range events {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return nil, err
+		}
+		envelopes = append(envelopes, Envelope{
+			ID:            gonanoid.Must(),
+			Type:          reflector.TypeInfoOf(ev).Name,
+			AggregateID:   aggID,
+			AggregateType: aggType,
+			Data:          data,
+			OccurredAt:    time.Now(),
+			Version:       expect + Version(i+1),
+		})
+	}
+	return store.Append(
+		ctx,
+		aggType,
+		aggID,
+		expect,
+		envelopes,
+	)
+}

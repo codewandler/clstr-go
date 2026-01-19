@@ -2,15 +2,11 @@ package es
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
-
-	"github.com/codewandler/clstr-go/internal/reflector"
 )
 
 type Env struct {
@@ -123,39 +119,7 @@ func (e *Env) NewConsumer(handler Handler, opts ...ConsumerOption) *Consumer {
 	return NewConsumer(e.store, e.registry, handler, WithLog(e.log), WithConsumerOpts(opts...))
 }
 
-func (e *Env) Append(ctx context.Context, expect Version, aggType string, aggID string, events ...any) error {
-	_, err := e.AppendWithResult(ctx, expect, aggType, aggID, events...)
+func (e *Env) Append(ctx context.Context, aggType string, aggID string, expect Version, events ...any) error {
+	_, err := AppendEvents(ctx, e.store, aggType, aggID, expect, events...)
 	return err
-}
-
-func (e *Env) AppendWithResult(
-	ctx context.Context,
-	expect Version,
-	aggType string,
-	aggID string,
-	events ...any,
-) (*StoreAppendResult, error) {
-	envelopes := make([]Envelope, 0)
-	for i, ev := range events {
-		data, err := json.Marshal(ev)
-		if err != nil {
-			return nil, err
-		}
-		envelopes = append(envelopes, Envelope{
-			ID:            gonanoid.Must(),
-			Type:          reflector.TypeInfoOf(ev).Name,
-			AggregateID:   aggID,
-			AggregateType: aggType,
-			Data:          data,
-			OccurredAt:    time.Now(),
-			Version:       expect + Version(i+1),
-		})
-	}
-	return e.store.Append(
-		ctx,
-		aggType,
-		aggID,
-		expect,
-		envelopes,
-	)
 }
