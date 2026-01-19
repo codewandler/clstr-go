@@ -7,11 +7,11 @@ import (
 )
 
 type (
-	Handler interface {
-		Handle(msgCtx MsgCtx) error
-	}
-	HandlerLifecycle interface {
+	Handler               interface{ Handle(msgCtx MsgCtx) error }
+	HandlerLifecycleStart interface {
 		Start(ctx context.Context) error
+	}
+	HandlerLifecycleShutdown interface {
 		Shutdown(ctx context.Context) error
 	}
 	HandleFunc           func(ctx MsgCtx) error

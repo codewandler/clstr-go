@@ -39,7 +39,7 @@ func (p *SnapshotProjection[T]) Start(ctx context.Context) error {
 		return err
 	}
 
-	if lc, ok := any(p.inner).(HandlerLifecycle); ok {
+	if lc, ok := any(p.inner).(HandlerLifecycleStart); ok {
 		return lc.Start(ctx)
 	}
 
@@ -47,7 +47,7 @@ func (p *SnapshotProjection[T]) Start(ctx context.Context) error {
 }
 
 func (p *SnapshotProjection[T]) Shutdown(ctx context.Context) error {
-	if lc, ok := any(p.inner).(HandlerLifecycle); ok {
+	if lc, ok := any(p.inner).(HandlerLifecycleShutdown); ok {
 		return lc.Shutdown(ctx)
 	}
 	return nil

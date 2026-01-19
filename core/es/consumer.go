@@ -81,7 +81,7 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 func (c *Consumer) Start(ctx context.Context) error {
 	c.log.Info("starting event consumer", slog.String("handler", fmt.Sprintf("%T", c.handler)))
 
-	if lc, ok := c.handler.(HandlerLifecycle); ok {
+	if lc, ok := c.handler.(HandlerLifecycleStart); ok {
 		if err := lc.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start consumer lifecycle: %w", err)
 		}
@@ -117,7 +117,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 	go func() {
 		defer func() {
 			sub.Cancel()
-			if lc, ok := c.handler.(HandlerLifecycle); ok {
+			if lc, ok := c.handler.(HandlerLifecycleShutdown); ok {
 				shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 				if err := lc.Shutdown(shutdownCtx); err != nil {
