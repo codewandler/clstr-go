@@ -176,7 +176,14 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		consumerCfg.DeliverPolicy = jetstream.DeliverNewPolicy
 	}
 
-	e.log.Debug("subscribe", slog.Any("config", filterSubjects))
+	if options.StartSequence() > 0 {
+		consumerCfg.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
+		consumerCfg.OptStartSeq = options.StartSequence()
+	}
+
+	// TODO: completely ignores start sequence ...
+
+	e.log.Debug("subscribe", slog.Any("consumer_config", consumerCfg))
 
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
@@ -370,8 +377,9 @@ func (e *EventStore) Append(
 	expectedVersion es.Version,
 	events []es.Envelope,
 ) (res *es.StoreAppendResult, err error) {
-	if len(events) == 0 {
-		return nil, nil
+
+	if events == nil || len(events) == 0 {
+		return nil, fmt.Errorf("no events to append")
 	}
 	if aggType == "" {
 		return nil, errors.New("aggregate type is empty")

@@ -45,5 +45,5 @@ func (t *TestingEnvAssert) Append(
 	aggID string,
 	events ...any,
 ) {
-	require.NoError(t.env.t, t.env.Append(ctx, expect, aggType, aggID, events...))
+	require.NoError(t.env.t, t.env.Append(ctx, aggType, aggID, expect, events...))
 }

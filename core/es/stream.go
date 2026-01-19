@@ -25,6 +25,7 @@ type SubscribeOpts struct {
 
 func (s *SubscribeOpts) DeliverPolicy() DeliverPolicy { return s.deliverPolicy }
 func (s *SubscribeOpts) Filters() []SubscribeFilter   { return s.filters }
+func (s *SubscribeOpts) StartSequence() uint64        { return s.startSequence }
 
 type SubscribeOption func(opts *SubscribeOpts)
 

@@ -26,7 +26,7 @@ func newTestStore(t *testing.T) *EventStore {
 	return store
 }
 
-func TestNats_Eventsourcing(t *testing.T) {
+func TestStore_Append(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	store := newTestStore(t)
@@ -119,7 +119,7 @@ func TestNats_Eventsourcing(t *testing.T) {
 	})
 }
 
-func TestNats_EventStore_Load_Latency(t *testing.T) {
+func TestStore_Latency(t *testing.T) {
 	var (
 		N     = 1_000
 		M     = 200
@@ -127,10 +127,6 @@ func TestNats_EventStore_Load_Latency(t *testing.T) {
 		aggID = "agg-123"
 	)
 	store := newTestStore(t)
-
-	if R >= N {
-		panic("R must be smaller than N")
-	}
 
 	for i := 0; i < N; i++ {
 		res, err := store.Append(t.Context(), "test", aggID, es.Version(i), []es.Envelope{
@@ -156,5 +152,26 @@ func TestNats_EventStore_Load_Latency(t *testing.T) {
 	took := time.Since(startAt)
 	perLoad := took / time.Duration(M)
 	t.Logf("took %s, per_item: %s", took, perLoad)
+}
 
+func TestStore_Subscribe(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < 3; i++ {
+		_, err := es.AppendEvents(t.Context(), s, "test", "123", es.Version(i), []any{1, 2, 3})
+		require.NoError(t, err)
+	}
+
+	sub, err := s.Subscribe(t.Context(), es.WithStartSequence(3), es.WithDeliverPolicy(es.DeliverAllPolicy))
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+
+	select {
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	case ev := <-sub.Chan():
+		t.Logf("got event: %+v", ev)
+		require.EqualValues(t, es.Version(3), ev.Version)
+	}
+
+	sub.Cancel()
 }

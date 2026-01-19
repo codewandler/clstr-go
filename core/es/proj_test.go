@@ -121,9 +121,9 @@ func TestProjection_InMemory(t *testing.T) {
 
 	require.NoError(t, te.Append(
 		t.Context(),
-		Version(12),
 		"foo",
 		"bar",
+		Version(12),
 		myProjTestEvent{Value: 5},
 	))
 
