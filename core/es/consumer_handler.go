@@ -71,12 +71,12 @@ type checkpointHandler struct {
 func (c *checkpointHandler) GetLastSeq() (uint64, error) { return c.cp.Get() }
 
 func (c *checkpointHandler) Handle(msgCtx MsgCtx) (err error) {
-	checkpointSeq, err := c.cp.Get()
+	lastSeenSeq, err := c.cp.Get()
 	if err != nil {
 		return err
 	}
 
-	minSeq := checkpointSeq + 1
+	minSeq := lastSeenSeq + 1
 
 	if msgCtx.Seq() < minSeq {
 		msgCtx.log.Debug("skip", slog.Uint64("min_seq", minSeq), slog.String("middleware", "checkpoint"))

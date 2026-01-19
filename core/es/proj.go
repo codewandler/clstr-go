@@ -27,6 +27,7 @@ type SnapshottableProjection interface {
 }
 
 type SnapshotProjection[T SnapshottableProjection] struct {
+	log                        *slog.Logger
 	inner                      T
 	snapshotter                Snapshotter
 	persistedLastSeq           uint64
@@ -91,6 +92,7 @@ func (p *SnapshotProjection[T]) snapshot(msgCtx MsgCtx) (err error) {
 }
 
 func (p *SnapshotProjection[T]) restore() error {
+	p.log.Debug("restoring projection state")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -103,16 +105,20 @@ func (p *SnapshotProjection[T]) restore() error {
 		return fmt.Errorf("failed to load snapshot: %w", err)
 	}
 
+	p.log.Debug("restoring snapshot", s.ObjVersion.SlogAttrWithKey("snapshot_version"))
+
 	err = p.inner.RestoreSnapshot(s.Data)
 	if err != nil {
 		return fmt.Errorf("failed to restore: %w", err)
 	}
 	p.persistedProjectionVersion = s.ObjVersion
 	p.persistedLastSeq = s.StreamSeq
+	p.log.Debug("restored projection state", slog.Uint64("seq", p.persistedLastSeq), s.ObjVersion.SlogAttrWithKey("snapshot_version"))
 	return nil
 }
 
 func NewSnapshotProjection[T SnapshottableProjection](
+	log *slog.Logger,
 	innerProjection T,
 	snapshotter Snapshotter,
 ) (*SnapshotProjection[T], error) {
@@ -126,6 +132,7 @@ func NewSnapshotProjection[T SnapshottableProjection](
 	p := &SnapshotProjection[T]{
 		snapshotter: snapshotter,
 		inner:       innerProjection,
+		log:         log.With(slog.String("projection", innerProjection.Name())),
 	}
 
 	if err := p.restore(); err != nil {

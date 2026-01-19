@@ -53,7 +53,7 @@ func TestProjection_InMemory(t *testing.T) {
 		p := &myInMemoryTestProj{
 			Counter: 0,
 		}
-		sp, err := NewSnapshotProjection(p, memSnapshotter)
+		sp, err := NewSnapshotProjection(slog.Default(), p, memSnapshotter)
 		require.NoError(t, err)
 		return sp
 	}

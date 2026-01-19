@@ -41,6 +41,7 @@ func (m *myTestProjection) Handle(msgCtx es.MsgCtx) error {
 func createTestProjection(t *testing.T, s es.Snapshotter) *es.SnapshotProjection[*myTestProjection] {
 	pInner := &myTestProjection{}
 	myProj, err := es.NewSnapshotProjection[*myTestProjection](
+		slog.Default(),
 		pInner,
 		s,
 	)
