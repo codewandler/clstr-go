@@ -39,9 +39,7 @@ func (p *SnapshotProjection[T]) Name() string                { return p.inner.Na
 func (p *SnapshotProjection[T]) GetLastSeq() (uint64, error) { return p.persistedLastSeq, nil }
 
 func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
-	seq, env, event := msgCtx.Seq(), msgCtx.Envelope(), msgCtx.Event()
-
-	msgCtx.Log().Debug("projection event", slog.Uint64("seq", env.Seq), slog.Any("event", event))
+	seq := msgCtx.Seq()
 
 	err := p.inner.Handle(msgCtx)
 	if err != nil {
