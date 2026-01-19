@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,15 +16,17 @@ type Checkpoint interface {
 }
 
 type MsgCtx struct {
-	ctx context.Context
-	log *slog.Logger
-	ev  Envelope
-	evt any
+	ctx  context.Context
+	log  *slog.Logger
+	ev   Envelope
+	evt  any
+	live bool
 }
 
 func (c *MsgCtx) Log() *slog.Logger        { return c.log }
 func (c *MsgCtx) Context() context.Context { return c.ctx }
 func (c *MsgCtx) Event() any               { return c.evt }
+func (c *MsgCtx) Live() bool               { return c.live }
 
 func (c *MsgCtx) Seq() uint64           { return c.ev.Seq }
 func (c *MsgCtx) Envelope() Envelope    { return c.ev }
@@ -40,6 +43,7 @@ type Consumer struct {
 	handler   Handler
 	log       *slog.Logger
 	live      chan struct{}
+	isLive    atomic.Bool
 	closeChan chan struct{}
 	closeOnce sync.Once
 	done      chan struct{}
@@ -97,10 +101,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 		return err
 	}
 
-	isLive := false
 	liveAt := sub.MaxSequence()
 	if liveAt == 0 {
-		isLive = true
+		c.isLive.Store(true)
 		close(c.live)
 	}
 
@@ -122,8 +125,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 				if err := c.handle(ctx, ev); err != nil {
 					c.log.Error("event handler failed", slog.Any("error", err))
 				}
+				isLive := c.isLive.Load()
 				if !isLive && ev.Seq >= liveAt {
-					isLive = true
+					c.isLive.Store(true)
 					close(c.live)
 				}
 			}

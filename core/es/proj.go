@@ -47,7 +47,7 @@ func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
 		return err
 	}
 
-	if seq%10 == 0 {
+	if msgCtx.Live() && seq%10 == 0 {
 		err = p.snapshot(msgCtx)
 		if err != nil {
 			return err
