@@ -1,6 +1,8 @@
 package nats
 
 import (
+	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -21,6 +23,10 @@ var connectOpts = []natsgo.Option{
 	natsgo.ReconnectWait(2 * time.Second),
 	natsgo.Timeout(2 * time.Second),
 	natsgo.DisconnectErrHandler(func(nc *natsgo.Conn, err error) {
+		if errors.Is(err, io.EOF) {
+			natsLog.Debug("disconnected", slog.Any("error", err))
+			return
+		}
 		natsLog.Warn("disconnected", slog.Any("error", err))
 	}),
 	natsgo.ReconnectHandler(func(nc *natsgo.Conn) {
