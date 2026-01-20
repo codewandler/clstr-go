@@ -15,7 +15,7 @@ type closeFunc = func()
 type Connector func() (nc *natsgo.Conn, err error)
 
 var natsLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-	Level: slog.LevelDebug,
+	Level: slog.LevelWarn,
 }))
 
 var connectOpts = []natsgo.Option{
