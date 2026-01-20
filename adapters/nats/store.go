@@ -188,42 +188,17 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-
-	cc, err := consumer.Consume(func(msg jetstream.Msg) {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if err := msg.Ack(); err != nil {
-			e.log.Error("es: failed to ack message", slog.Any("error", err))
-			return
-		}
-
-		ev, err := e.decodeMsg(msg)
-		if err != nil {
-			e.log.Error("es: failed to decode message", slog.Any("error", err))
-			return
-		}
-
-		select {
-		case ch <- *ev:
-		case <-ctx.Done():
-		}
-	})
+	msgCtx, err := consumer.Messages()
 	if err != nil {
-		cancel()
+		//cancel()
 		return nil, err
 	}
 
 	stopOnce := sync.Once{}
 	stop := func() {
 		stopOnce.Do(func() {
-			cc.Drain()
-			cancel()
-			close(ch)
+			e.log.Debug("draining subscription")
+			msgCtx.Drain()
 		})
 	}
 
@@ -231,7 +206,47 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		stop()
 	})
 
-	return &jsStoreSubscription{ch: ch, cancel: stop, maxSeq: uint64(maxSeq)}, nil
+	go func() {
+		defer func() {
+			e.log.Debug("unsubscribed")
+			close(ch)
+		}()
+
+		for {
+
+			msg, err := msgCtx.Next( /*jetstream.NextContext(ctx)*/ )
+			if err != nil {
+				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+					return
+				}
+				e.log.Error("failed to read next message", slog.Any("error", err))
+				return
+			}
+
+			if err := msg.Ack(); err != nil {
+				e.log.Error("es: failed to ack message", slog.Any("error", err))
+				return
+			}
+
+			ev, err := e.decodeMsg(msg)
+			if err != nil {
+				e.log.Error("es: failed to decode message", slog.Any("error", err))
+				return
+			}
+
+			select {
+			case ch <- *ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return &jsStoreSubscription{
+		ch:     ch,
+		cancel: stop,
+		maxSeq: maxSeq,
+	}, nil
 }
 
 func (e *EventStore) Load(

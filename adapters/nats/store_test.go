@@ -1,6 +1,8 @@
 package nats
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -155,23 +157,47 @@ func TestStore_Latency(t *testing.T) {
 }
 
 func TestStore_Subscribe(t *testing.T) {
-	s := newTestStore(t)
-	for i := 0; i < 3; i++ {
-		_, err := es.AppendEvents(t.Context(), s, "test", "123", es.Version(i), []any{1, 2, 3})
+	t.Run("with start sequence", func(t *testing.T) {
+		s := newTestStore(t)
+		for i := 0; i < 3; i++ {
+			_, err := es.AppendEvents(t.Context(), s, "test", "123", es.Version(i), []any{1, 2, 3})
+			require.NoError(t, err)
+		}
+
+		sub, err := s.Subscribe(t.Context(), es.WithStartSequence(3), es.WithDeliverPolicy(es.DeliverAllPolicy))
 		require.NoError(t, err)
-	}
+		require.NotNil(t, sub)
 
-	sub, err := s.Subscribe(t.Context(), es.WithStartSequence(3), es.WithDeliverPolicy(es.DeliverAllPolicy))
-	require.NoError(t, err)
-	require.NotNil(t, sub)
+		select {
+		case <-time.After(time.Second):
+			t.Fatal("timeout")
+		case ev := <-sub.Chan():
+			t.Logf("got event: %+v", ev)
+			require.EqualValues(t, es.Version(3), ev.Version)
+		}
 
-	select {
-	case <-time.After(time.Second):
-		t.Fatal("timeout")
-	case ev := <-sub.Chan():
-		t.Logf("got event: %+v", ev)
-		require.EqualValues(t, es.Version(3), ev.Version)
-	}
+		sub.Cancel()
+	})
 
-	sub.Cancel()
+	t.Run("unsubscribe while writing", func(t *testing.T) {
+		s := newTestStore(t)
+
+		sub, err := s.Subscribe(t.Context(), es.WithStartSequence(3), es.WithDeliverPolicy(es.DeliverAllPolicy))
+		require.NoError(t, err)
+		require.NotNil(t, sub)
+
+		go func() {
+			for i := 0; i < 200; i++ {
+				_, err := es.AppendEvents(t.Context(), s, "test", "123", es.Version(i), []any{1, 2, 3})
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				require.NoError(t, err)
+				<-time.After(10 * time.Millisecond)
+			}
+		}()
+
+		<-time.After(500 * time.Millisecond)
+		sub.Cancel()
+	})
 }
