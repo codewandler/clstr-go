@@ -27,4 +27,13 @@ func TestMap_JSON(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(`{"foobar":{"x":10}}`), &m))
 		require.Equal(t, 10, m.Ensure("foobar").X)
 	})
+
+	t.Run("unmarshal wrapped nil", func(t *testing.T) {
+		type fooType struct {
+			M Map[testMapFactory] `json:"m"`
+		}
+		var f fooType
+		require.NoError(t, json.Unmarshal([]byte(`{}`), &f))
+		require.NotNil(t, f.M)
+	})
 }

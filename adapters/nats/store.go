@@ -149,13 +149,13 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
-	maxSeq := 0
+	var maxSeq uint64
 	for _, s := range filterSubjects {
 		m, err := e.stream.GetLastMsgForSubject(ctx, s)
 		if err != nil && !errors.Is(err, jetstream.ErrMsgNotFound) {
 			return nil, fmt.Errorf("failed to get last message for subject %q: %w", s, err)
 		} else if err == nil {
-			maxSeq = max(maxSeq, int(m.Sequence))
+			maxSeq = max(maxSeq, m.Sequence)
 		}
 	}
 
@@ -181,9 +181,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		consumerCfg.OptStartSeq = options.StartSequence()
 	}
 
-	// TODO: completely ignores start sequence ...
-
-	e.log.Debug("subscribe", slog.Any("consumer_config", consumerCfg))
+	e.log.Debug("subscribe", slog.Any("consumer_config", consumerCfg), slog.Uint64("max_sequence", maxSeq))
 
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
