@@ -109,7 +109,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 	}
 
 	liveAt := sub.MaxSequence()
-	if liveAt == 0 {
+	if liveAt == 0 || liveAt == lastSeenSeq {
 		c.isLive.Store(true)
 		close(c.live)
 	}
