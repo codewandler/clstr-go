@@ -14,11 +14,11 @@ tasks:
 
   loadtest:
     env:
-      N: 20000  # total events
+      N: 20000  # total operations
       B: 2000   # batch size
       BACKEND: nats
     cmds:
-      - go run ./cmd/loadtest/
+      - go run ./examples/loadtest/
 
   default:
     cmds:
