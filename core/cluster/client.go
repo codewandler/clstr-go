@@ -7,14 +7,22 @@ import (
 	"fmt"
 )
 
+// ClientOptions configures client creation.
 type ClientOptions struct {
-	Transport       ClientTransport
-	NumShards       uint32
-	Seed            string
+	// Transport is the underlying messaging transport (required).
+	Transport ClientTransport
+	// NumShards is the total number of shards in the cluster (required).
+	NumShards uint32
+	// Seed is an optional string for consistent shard hashing across clients.
+	Seed string
+	// EnvelopeOptions are default options applied to all outgoing envelopes.
 	EnvelopeOptions []EnvelopeOption
-	Metrics         ClusterMetrics
+	// Metrics for client instrumentation. If nil, a no-op implementation is used.
+	Metrics ClusterMetrics
 }
 
+// Client routes messages to cluster nodes based on shard assignment.
+// Create via [NewClient].
 type Client struct {
 	t         ClientTransport
 	numShards uint32
@@ -23,6 +31,8 @@ type Client struct {
 	metrics   ClusterMetrics
 }
 
+// NewClient creates a new cluster client with the given options.
+// Returns an error if required options (Transport, NumShards) are missing.
 func NewClient(opts ClientOptions) (*Client, error) {
 	if opts.Transport == nil {
 		return nil, fmt.Errorf("cluster: ClientOptions.Transport is required")
@@ -132,6 +142,9 @@ func (c *Client) RequestKey(ctx context.Context, key string, msgType string, dat
 	return c.RequestShard(ctx, shard, msgType, data, opts...)
 }
 
+// Key returns a client scoped to the shard determined by the given key.
+// The key is hashed consistently to determine the target shard.
+// Use this for entity-based routing (e.g., by user ID, tenant ID).
 func (c *Client) Key(key string, opts ...EnvelopeOption) *ScopedClient {
 	return &ScopedClient{
 		client: c,
@@ -141,12 +154,14 @@ func (c *Client) Key(key string, opts ...EnvelopeOption) *ScopedClient {
 	}
 }
 
+// Shard returns a client scoped to a specific shard number.
+// Use this when you already know the target shard.
 func (c *Client) Shard(shard uint32) *ScopedClient {
 	return &ScopedClient{client: c, shard: shard}
 }
 
-// === Scoped Client ===
-
+// ScopedClient is a client bound to a specific shard, enabling fluent
+// request/notify operations without repeatedly specifying the shard or key.
 type ScopedClient struct {
 	client *Client
 	shard  uint32
@@ -154,6 +169,7 @@ type ScopedClient struct {
 	opts   []EnvelopeOption
 }
 
+// GetNodeInfo queries the node that owns this shard for its metadata.
 func (c *ScopedClient) GetNodeInfo(ctx context.Context) (res *GetNodeInfoResponse, err error) {
 	return NewRequest[GetNodeInfoRequest, GetNodeInfoResponse](c).Request(ctx, GetNodeInfoRequest{})
 }
@@ -163,6 +179,8 @@ func (c *ScopedClient) requestRaw(ctx context.Context, msgType string, data []by
 	return c.client.RequestShard(ctx, c.shard, msgType, data, allOpts...)
 }
 
+// Request sends a request to the scoped shard and waits for the response.
+// The payload is JSON-encoded and the message type is derived from the payload type.
 func (c *ScopedClient) Request(ctx context.Context, payload any, opts ...EnvelopeOption) ([]byte, error) {
 
 	if err := validatePayload(payload); err != nil {
@@ -176,6 +194,7 @@ func (c *ScopedClient) Request(ctx context.Context, payload any, opts ...Envelop
 	return c.requestRaw(ctx, getMessageType(payload), data, opts...)
 }
 
+// Notify sends a fire-and-forget message to the scoped shard.
 func (c *ScopedClient) Notify(ctx context.Context, msg any, opts ...EnvelopeOption) error {
 	if err := validatePayload(msg); err != nil {
 		return err
@@ -188,18 +207,18 @@ func (c *ScopedClient) Notify(ctx context.Context, msg any, opts ...EnvelopeOpti
 	return c.client.NotifyShard(ctx, c.shard, getMessageType(msg), data, allOpts...)
 }
 
-type (
-	Requester interface {
-		requestRaw(ctx context.Context, msgType string, data []byte, opts ...EnvelopeOption) ([]byte, error)
-	}
-)
+// Requester is implemented by types that can send raw requests.
+type Requester interface {
+	requestRaw(ctx context.Context, msgType string, data []byte, opts ...EnvelopeOption) ([]byte, error)
+}
 
-type (
-	Request[IN any, OUT any] struct {
-		requester Requester
-	}
-)
+// Request is a typed request builder for making type-safe cluster requests.
+type Request[IN any, OUT any] struct {
+	requester Requester
+}
 
+// NewRequest creates a typed request builder for the given requester.
+// Use this for type-safe request/response patterns.
 func NewRequest[IN any, OUT any](requester Requester) *Request[IN, OUT] {
 	return &Request[IN, OUT]{
 		requester: requester,
@@ -216,6 +235,7 @@ func validatePayload(payload any) error {
 	return nil
 }
 
+// Request sends the payload and deserializes the response into *OUT.
 func (r *Request[IN, OUT]) Request(ctx context.Context, payload IN) (out *OUT, err error) {
 	if err = validatePayload(payload); err != nil {
 		return nil, err

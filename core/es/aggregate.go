@@ -14,9 +14,9 @@ var (
 	ErrUnknownEventType    = errors.New("unknown event type")
 )
 
-// events
 type (
 	// AggregateDeleted is an event that marks an aggregate as deleted.
+	// Use this as a soft-delete marker that can be detected by projections.
 	AggregateDeleted struct{}
 )
 
@@ -182,6 +182,13 @@ func RaiseAndApply(a raiseApplier, events ...any) (err error) {
 	return
 }
 
+// RaiseAndApplyD returns a deferred function that calls [RaiseAndApply].
+// This is useful with [BaseAggregate.Checked] for conditional event application:
+//
+//	return b.Checked(
+//	    assert.NotEmpty(user.Email, "email required"),
+//	    es.RaiseAndApplyD(user, &EmailChanged{Email: newEmail}),
+//	)
 func RaiseAndApplyD(a Aggregate, events ...any) func() error {
 	return func() error {
 		return RaiseAndApply(a, events...)

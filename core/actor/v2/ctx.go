@@ -6,10 +6,17 @@ import (
 )
 
 type (
+	// HandlerCtx is the context passed to message handlers, providing access
+	// to logging, scheduling background tasks, and making requests to other actors.
 	HandlerCtx interface {
 		context.Context
+		// Log returns the actor's logger.
 		Log() *slog.Logger
+		// Schedule runs f asynchronously outside the actor's mailbox processing.
+		// Use for I/O-bound or long-running operations that shouldn't block message handling.
 		Schedule(f scheduleFunc)
+		// Request sends a request to another actor and waits for the response.
+		// Returns [ErrSelfRequest] if the request would be sent to the same actor.
 		Request(ctx context.Context, req any) (res any, err error)
 		// waitScheduled is internal - waits for all scheduled tasks to complete.
 		waitScheduled()

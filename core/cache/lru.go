@@ -5,7 +5,11 @@ import (
 	"time"
 )
 
+// LRUOpts configures the LRU cache behavior.
 type LRUOpts struct {
+	// Size is the maximum number of entries in the cache.
+	// When exceeded, the least recently used entry is evicted.
+	// Defaults to 128 if not specified or <= 0.
 	Size int
 }
 
@@ -39,6 +43,12 @@ type delReq struct {
 	key string
 }
 
+// LRU is a thread-safe in-memory cache with LRU eviction and TTL support.
+// It processes all operations through a single goroutine to ensure
+// consistency without external synchronization.
+//
+// Create with [NewLRU] and call [LRU.Close] when done to stop the
+// background goroutine.
 type LRU struct {
 	getCh  chan getReq
 	putCh  chan putReq
@@ -46,6 +56,8 @@ type LRU struct {
 	doneCh chan struct{}
 }
 
+// Get retrieves a value by key. Returns false if not found or expired.
+// Accessing an entry moves it to the front of the LRU list.
 func (L *LRU) Get(key string) (any, bool) {
 	resp := make(chan getResp)
 	select {
@@ -57,6 +69,9 @@ func (L *LRU) Get(key string) (any, bool) {
 	}
 }
 
+// Put stores a value with optional TTL. If the key already exists,
+// the value is updated and moved to the front of the LRU list.
+// If the cache is full, the least recently used entry is evicted.
 func (L *LRU) Put(key string, val any, opts ...PutOption) {
 	select {
 	case L.putCh <- putReq{key: key, val: val, opts: opts}:
@@ -64,6 +79,7 @@ func (L *LRU) Put(key string, val any, opts ...PutOption) {
 	}
 }
 
+// Delete removes an entry by key. No-op if the key doesn't exist.
 func (L *LRU) Delete(key string) {
 	select {
 	case L.delCh <- delReq{key: key}:
@@ -71,10 +87,14 @@ func (L *LRU) Delete(key string) {
 	}
 }
 
+// Close stops the background goroutine. After Close returns, all
+// operations become no-ops. Close is idempotent.
 func (L *LRU) Close() {
 	close(L.doneCh)
 }
 
+// NewLRU creates a new LRU cache with the specified options.
+// It starts a background goroutine that must be stopped by calling [LRU.Close].
 func NewLRU(opts LRUOpts) *LRU {
 	if opts.Size <= 0 {
 		opts.Size = 128

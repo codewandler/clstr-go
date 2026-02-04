@@ -8,6 +8,9 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
+// ShardFromString computes a shard number (0 to numShards-1) from a string key.
+// Uses BLAKE2b hashing for uniform distribution. The optional seed ensures
+// consistent hashing across different clients.
 func ShardFromString(key string, numShards uint32, seed string) uint32 {
 	if numShards == 0 {
 		return 0
@@ -23,6 +26,17 @@ func ShardFromString(key string, numShards uint32, seed string) uint32 {
 	return uint32(v % uint64(numShards))
 }
 
+// ShardsForNode computes which shards a node should own using Highest Random Weight
+// (rendezvous) hashing. This provides:
+//   - Even distribution of shards across nodes
+//   - Minimal shard movement when nodes join or leave
+//   - Deterministic assignment given the same inputs
+//
+// Parameters:
+//   - nodeID: The ID of the node to compute shards for
+//   - nodeIDs: All node IDs in the cluster (must include nodeID)
+//   - numShards: Total number of shards in the cluster
+//   - seed: Optional seed for consistent hashing
 func ShardsForNode(nodeID string, nodeIDs []string, numShards uint32, seed string) []uint32 {
 	if numShards == 0 || len(nodeIDs) == 0 {
 		return nil

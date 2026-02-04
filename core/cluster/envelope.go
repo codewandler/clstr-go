@@ -12,8 +12,11 @@ const (
 	reservedHeaderPrefix = "x-clstr-"
 )
 
+// EnvelopeOption configures envelope properties before sending.
 type EnvelopeOption func(*Envelope)
 
+// WithHeader adds a custom header to the envelope.
+// Headers with the "x-clstr-" prefix are reserved and will cause validation to fail.
 func WithHeader(key, value string) EnvelopeOption {
 	return func(e *Envelope) {
 		if e.Headers == nil {
@@ -23,16 +26,27 @@ func WithHeader(key, value string) EnvelopeOption {
 	}
 }
 
+// Envelope is the message container for cluster communication.
+// It wraps the payload with routing and metadata information.
 type Envelope struct {
-	Shard       int               `json:"shard"`
-	Type        string            `json:"type"`
-	Data        []byte            `json:"data"`
-	ReplyTo     string            `json:"reply_to,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	TTLMs       int64             `json:"ttl_ms,omitempty"`
-	CreatedAtMs int64             `json:"created_at_ms,omitempty"`
+	// Shard is the target shard number for routing.
+	Shard int `json:"shard"`
+	// Type is the message type name for handler dispatch.
+	Type string `json:"type"`
+	// Data is the JSON-encoded message payload.
+	Data []byte `json:"data"`
+	// ReplyTo is the reply address (set by transport for request-response).
+	ReplyTo string `json:"reply_to,omitempty"`
+	// Headers contains custom metadata.
+	Headers map[string]string `json:"headers,omitempty"`
+	// TTLMs is the time-to-live in milliseconds. Zero means no expiration.
+	TTLMs int64 `json:"ttl_ms,omitempty"`
+	// CreatedAtMs is the creation timestamp in milliseconds since epoch.
+	CreatedAtMs int64 `json:"created_at_ms,omitempty"`
 }
 
+// GetHeader retrieves a header value by key.
+// Returns empty string and false if the header is not set.
 func (e Envelope) GetHeader(key string) (string, bool) {
 	if e.Headers == nil {
 		return "", false

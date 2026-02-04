@@ -13,13 +13,22 @@ import (
 )
 
 type (
+	// OnPanic is called when an actor's handler panics.
+	// It receives the recovered value, stack trace, and the message that caused the panic.
 	OnPanic func(recovered any, stack []byte, msg any)
 
+	// Actor is the interface for interacting with an actor instance.
 	Actor interface {
+		// Send enqueues a message for processing. Blocks until the message
+		// is enqueued, the context is canceled, or the actor is stopped.
 		Send(ctx context.Context, msg Envelope) error
+		// Pause stops message processing until Resume or Step is called.
 		Pause() error
+		// Resume continues normal message processing after a Pause.
 		Resume() error
+		// Step processes exactly one message when paused.
 		Step() error
+		// Done returns a channel that is closed when the actor stops.
 		Done() <-chan struct{}
 	}
 )
@@ -40,14 +49,20 @@ type ctrlMsg struct {
 	kind ctrlKind
 }
 
+// Options configures actor creation.
 type Options struct {
+	// MailboxSize is the capacity of the message queue. Defaults to 1024.
 	MailboxSize int
+	// ControlSize is the capacity of the control channel. Defaults to 16.
 	ControlSize int
-	Context     context.Context
-	Logger      *slog.Logger
-	OnPanic     OnPanic
+	// Context is the parent context for the actor's lifecycle.
+	Context context.Context
+	// Logger for actor operations. Defaults to slog.Default().
+	Logger *slog.Logger
+	// OnPanic is called when a handler panics. Defaults to logging the panic.
+	OnPanic OnPanic
 	// MaxConcurrentTasks caps the number of tasks run via HandlerCtx.Schedule.
-	// If 0 or negative, scheduling is unlimited.
+	// If 0 or negative, defaults to 32.
 	MaxConcurrentTasks int
 	// Metrics for actor instrumentation. If nil, a no-op implementation is used.
 	Metrics ActorMetrics
@@ -60,6 +75,8 @@ type actorIDKey struct{}
 // which would cause a deadlock.
 var ErrSelfRequest = errors.New("self-request would deadlock: actor cannot send request to itself")
 
+// BaseActor is the core actor implementation that processes messages
+// sequentially from its mailbox. Create via [New] rather than directly.
 type BaseActor struct {
 	id  string
 	ctx context.Context
@@ -78,6 +95,8 @@ type BaseActor struct {
 	metrics ActorMetrics
 }
 
+// New creates and starts a new actor with the given options and handler.
+// The actor begins processing messages immediately in a background goroutine.
 func New(opt Options, handler RawHandler) Actor {
 	if opt.MailboxSize == 0 {
 		opt.MailboxSize = 1024

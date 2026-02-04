@@ -10,15 +10,25 @@ import (
 )
 
 type (
+	// NodeOptions configures node creation.
 	NodeOptions struct {
-		Log       *slog.Logger
-		NodeID    string
+		// Log is the logger for node operations. Defaults to slog.Default().
+		Log *slog.Logger
+		// NodeID is the unique identifier for this node. Auto-generated if empty.
+		NodeID string
+		// Transport is the server transport for receiving messages (required).
 		Transport ServerTransport
-		Shards    []uint32
-		Handler   ServerHandlerFunc
-		Metrics   ClusterMetrics
+		// Shards is the list of shard IDs this node owns.
+		// Use [ShardsForNode] to compute this based on cluster membership.
+		Shards []uint32
+		// Handler processes incoming messages for owned shards.
+		Handler ServerHandlerFunc
+		// Metrics for node instrumentation. If nil, a no-op implementation is used.
+		Metrics ClusterMetrics
 	}
 
+	// Node represents a cluster member that owns and processes shards.
+	// Create via [NewNode] and start with [Node.Run].
 	Node struct {
 		log     *slog.Logger
 		nodeID  string
@@ -29,6 +39,7 @@ type (
 	}
 )
 
+// NewNode creates a new cluster node with the given options.
 func NewNode(opts NodeOptions) *Node {
 	log := opts.Log
 	if log == nil {
@@ -104,6 +115,8 @@ func (n *Node) handleMsg(ctx context.Context, env Envelope) (data []byte, err er
 	return
 }
 
+// Run starts the node, subscribing to all owned shards and handling incoming messages.
+// Returns an error if subscription fails for any shard.
 func (n *Node) Run(ctx context.Context) error {
 	n.log.Info("starting node", slog.Int("num_shards", len(n.shards)))
 	for _, s := range n.shards {

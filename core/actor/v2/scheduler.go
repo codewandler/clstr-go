@@ -7,11 +7,14 @@ import (
 	"sync/atomic"
 )
 
+// scheduleFunc is the signature for scheduled background tasks.
 type scheduleFunc func()
 
+// Scheduler manages execution of background tasks with optional concurrency limits.
 type Scheduler interface {
+	// Schedule queues a function for asynchronous execution.
 	Schedule(f scheduleFunc)
-	// Wait blocks until all in-flight tasks complete or context is cancelled.
+	// Wait blocks until all in-flight tasks complete.
 	Wait()
 }
 
