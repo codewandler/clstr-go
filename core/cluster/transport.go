@@ -2,12 +2,6 @@ package cluster
 
 import (
 	"context"
-	"errors"
-)
-
-var (
-	ErrTransportClosed            = errors.New("transport closed")
-	ErrTransportNoShardSubscriber = errors.New("no subscriber for shard")
 )
 
 type Subscription interface {

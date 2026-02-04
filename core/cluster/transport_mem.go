@@ -8,6 +8,12 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+const (
+	DefaultMaxConcurrentHandlers = 100
+	DefaultHandlerTimeout        = 30 * time.Second
 )
 
 // responseFrame is the minimal response encoding for Request().
@@ -18,6 +24,17 @@ type responseFrame struct {
 }
 
 type handlerFn func(context.Context, Envelope) ([]byte, error)
+
+// MemoryTransportOpts configures the in-memory transport.
+type MemoryTransportOpts struct {
+	// MaxConcurrentHandlers limits concurrent handler goroutines.
+	// 0 = default (100), -1 = unlimited
+	MaxConcurrentHandlers int
+
+	// HandlerTimeout is the maximum duration for a handler to complete.
+	// 0 = default (30s)
+	HandlerTimeout time.Duration
+}
 
 type MemoryTransport struct {
 	mu  sync.RWMutex
@@ -32,14 +49,42 @@ type MemoryTransport struct {
 	inboxes map[string]chan []byte
 
 	seq uint64
+
+	// Bounded concurrency
+	sem            chan struct{}
+	wg             sync.WaitGroup
+	handlerTimeout time.Duration
 }
 
-func NewInMemoryTransport() *MemoryTransport {
-	return &MemoryTransport{
-		log:       slog.New(slog.DiscardHandler),
-		shardSubs: make(map[uint32]map[string]handlerFn),
-		inboxes:   make(map[string]chan []byte),
+func NewInMemoryTransport(opts ...MemoryTransportOpts) *MemoryTransport {
+	var opt MemoryTransportOpts
+	if len(opts) > 0 {
+		opt = opts[0]
 	}
+
+	maxHandlers := opt.MaxConcurrentHandlers
+	if maxHandlers == 0 {
+		maxHandlers = DefaultMaxConcurrentHandlers
+	}
+
+	timeout := opt.HandlerTimeout
+	if timeout == 0 {
+		timeout = DefaultHandlerTimeout
+	}
+
+	t := &MemoryTransport{
+		log:            slog.New(slog.DiscardHandler),
+		shardSubs:      make(map[uint32]map[string]handlerFn),
+		inboxes:        make(map[string]chan []byte),
+		handlerTimeout: timeout,
+	}
+
+	// maxHandlers < 0 means unlimited (no semaphore)
+	if maxHandlers > 0 {
+		t.sem = make(chan struct{}, maxHandlers)
+	}
+
+	return t
 }
 
 func (t *MemoryTransport) WithLog(log *slog.Logger) *MemoryTransport {
@@ -48,6 +93,10 @@ func (t *MemoryTransport) WithLog(log *slog.Logger) *MemoryTransport {
 }
 
 func (t *MemoryTransport) doPublish(ctx context.Context, env Envelope) error {
+	// Check TTL before processing
+	if env.Expired() {
+		return ErrEnvelopeExpired
+	}
 
 	t.mu.RLock()
 	if t.closed {
@@ -69,14 +118,23 @@ func (t *MemoryTransport) doPublish(ctx context.Context, env Envelope) error {
 
 	// If nobody is subscribed, drop events; for requests, the caller will time out.
 	for _, h := range handlers {
-		h := h
-		go t.invokeHandler(ctx, h, env)
+		t.scheduleHandler(ctx, h, env)
 	}
 
 	return nil
 }
 
 func (t *MemoryTransport) Request(ctx context.Context, env Envelope) ([]byte, error) {
+	// Validate envelope
+	if err := env.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Set CreatedAtMs if TTL is set but CreatedAtMs is not
+	if env.TTLMs > 0 && env.CreatedAtMs == 0 {
+		env.CreatedAtMs = time.Now().UnixMilli()
+	}
+
 	// Create a per-request inbox
 	replyTo := t.newInboxID()
 	replyCh, err := t.registerInbox(replyTo)
@@ -146,9 +204,8 @@ func (t *MemoryTransport) SubscribeShard(
 
 func (t *MemoryTransport) Close() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if t.closed {
+		t.mu.Unlock()
 		return nil
 	}
 	t.closed = true
@@ -163,6 +220,10 @@ func (t *MemoryTransport) Close() error {
 	for shard := range t.shardSubs {
 		delete(t.shardSubs, shard)
 	}
+	t.mu.Unlock()
+
+	// Wait for in-flight handlers to complete
+	t.wg.Wait()
 
 	t.log.Debug("closed")
 
@@ -194,9 +255,72 @@ func (s *subscription) Unsubscribe() error {
 	return nil
 }
 
-func (t *MemoryTransport) invokeHandler(ctx context.Context, h handlerFn, env Envelope) {
-	resp, err := h(ctx, env)
+func (t *MemoryTransport) scheduleHandler(ctx context.Context, h handlerFn, env Envelope) {
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
 
+		// Acquire semaphore if bounded concurrency is enabled
+		if t.sem != nil {
+			select {
+			case t.sem <- struct{}{}:
+				defer func() { <-t.sem }()
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		t.invokeHandler(ctx, h, env)
+	}()
+}
+
+func (t *MemoryTransport) invokeHandler(ctx context.Context, h handlerFn, env Envelope) {
+	// Determine timeout: use handler timeout, but cap at remaining TTL if set
+	timeout := t.handlerTimeout
+	if env.TTLMs > 0 && env.CreatedAtMs > 0 {
+		remaining := time.Duration(env.CreatedAtMs+env.TTLMs-time.Now().UnixMilli()) * time.Millisecond
+		if remaining <= 0 {
+			// Already expired, send timeout error if this is a request
+			t.sendResponse(env, nil, ErrEnvelopeExpired)
+			return
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+
+	handlerCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		data, err := h(handlerCtx, env)
+		done <- result{data, err}
+	}()
+
+	var resp []byte
+	var err error
+
+	select {
+	case r := <-done:
+		resp, err = r.data, r.err
+	case <-handlerCtx.Done():
+		if errors.Is(handlerCtx.Err(), context.DeadlineExceeded) {
+			err = ErrHandlerTimeout
+		} else {
+			err = handlerCtx.Err()
+		}
+	}
+
+	t.sendResponse(env, resp, err)
+}
+
+func (t *MemoryTransport) sendResponse(env Envelope, resp []byte, err error) {
 	// If it's not a request, nothing to do.
 	if env.ReplyTo == "" {
 		if err != nil {

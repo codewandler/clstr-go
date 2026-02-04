@@ -2,59 +2,102 @@ package cluster
 
 import (
 	"context"
-	"fmt"
 	"sync"
+
+	"github.com/codewandler/clstr-go/core/cache"
 )
+
+const DefaultHandlerCacheSize = 1024
 
 type ScopedHandlerOpts struct {
 	Extract func(env Envelope) (key string, err error)
 	Create  func(key string) (ServerHandlerFunc, error)
+	// CacheSize limits the number of cached handlers.
+	// 0 = default (1024), -1 = unlimited (original behavior)
+	CacheSize int
 }
 
 func NewScopedHandler(opts ScopedHandlerOpts) ServerHandlerFunc {
+	cacheSize := opts.CacheSize
+	if cacheSize == 0 {
+		cacheSize = DefaultHandlerCacheSize
+	}
+	if cacheSize < 0 {
+		return newUnboundedScopedHandler(opts)
+	}
 
-	var (
-		mu       sync.Mutex
-		handlers = map[string]ServerHandlerFunc{}
-	)
+	lru := cache.NewLRU(cache.LRUOpts{Size: cacheSize})
 
 	return func(ctx context.Context, env Envelope) ([]byte, error) {
-		// extract key
 		k, err := opts.Extract(env)
 		if err != nil {
 			return nil, err
 		}
 
 		if k == "" {
-			return nil, fmt.Errorf("key is required")
+			return nil, ErrKeyRequired
 		}
 
-		// create handler if not exists
+		if v, ok := lru.Get(k); ok {
+			return v.(ServerHandlerFunc)(ctx, env)
+		}
+
+		nh, err := opts.Create(k)
+		if err != nil {
+			return nil, err
+		}
+		lru.Put(k, nh)
+		return nh(ctx, env)
+	}
+}
+
+func newUnboundedScopedHandler(opts ScopedHandlerOpts) ServerHandlerFunc {
+	var (
+		mu       sync.Mutex
+		handlers = map[string]ServerHandlerFunc{}
+	)
+
+	return func(ctx context.Context, env Envelope) ([]byte, error) {
+		k, err := opts.Extract(env)
+		if err != nil {
+			return nil, err
+		}
+
+		if k == "" {
+			return nil, ErrKeyRequired
+		}
+
 		mu.Lock()
-		_, ok := handlers[k]
+		h, ok := handlers[k]
 		if !ok {
-			if nh, err := opts.Create(k); err != nil {
+			nh, err := opts.Create(k)
+			if err != nil {
 				mu.Unlock()
 				return nil, err
-			} else {
-				handlers[k] = nh
 			}
+			handlers[k] = nh
+			h = nh
 		}
 		mu.Unlock()
 
-		return handlers[k](ctx, env)
+		return h(ctx, env)
 	}
 }
 
 func NewKeyHandler(createFunc func(key string) (ServerHandlerFunc, error)) ServerHandlerFunc {
+	return NewKeyHandlerWithOpts(createFunc, 0)
+}
+
+func NewKeyHandlerWithOpts(createFunc func(key string) (ServerHandlerFunc, error), cacheSize int) ServerHandlerFunc {
 	return NewScopedHandler(ScopedHandlerOpts{
 		Extract: func(env Envelope) (string, error) {
 			key, ok := env.GetHeader(envHeaderKey)
 			if !ok {
-				return "", fmt.Errorf("missing key")
+				return "", ErrMissingKeyHeader
 			}
 			return key, nil
 		},
-		Create: createFunc,
+		Create:    createFunc,
+		CacheSize: cacheSize,
 	})
 }

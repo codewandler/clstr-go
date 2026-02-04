@@ -39,7 +39,7 @@ func (c *Client) getShardForKey(key string) uint32 {
 	return ShardFromString(key, c.numShards, c.seed)
 }
 
-func (c *Client) newEnv(shard uint32, msgType string, data []byte, opts ...EnvelopeOption) Envelope {
+func (c *Client) newEnv(shard uint32, msgType string, data []byte, opts ...EnvelopeOption) (Envelope, error) {
 	e := Envelope{
 		Shard: int(shard),
 		Type:  msgType,
@@ -51,7 +51,10 @@ func (c *Client) newEnv(shard uint32, msgType string, data []byte, opts ...Envel
 	for _, opt := range opts {
 		opt(&e)
 	}
-	return e
+	if err := e.Validate(); err != nil {
+		return Envelope{}, err
+	}
+	return e, nil
 }
 
 // NotifyShard publishes directly to a shard (caller already knows shard).
@@ -59,7 +62,11 @@ func (c *Client) NotifyShard(ctx context.Context, shard uint32, msgType string, 
 	if shard >= c.numShards {
 		return fmt.Errorf("cluster: shard %d out of range (numShards=%d)", shard, c.numShards)
 	}
-	_, err := c.t.Request(ctx, c.newEnv(shard, msgType, data, opts...))
+	env, err := c.newEnv(shard, msgType, data, opts...)
+	if err != nil {
+		return err
+	}
+	_, err = c.t.Request(ctx, env)
 	return err
 }
 
@@ -68,7 +75,11 @@ func (c *Client) RequestShard(ctx context.Context, shard uint32, msgType string,
 	if shard >= c.numShards {
 		return nil, fmt.Errorf("cluster: shard %d out of range (numShards=%d)", shard, c.numShards)
 	}
-	return c.t.Request(ctx, c.newEnv(shard, msgType, data, opts...))
+	env, err := c.newEnv(shard, msgType, data, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return c.t.Request(ctx, env)
 }
 
 // NotifyKey publishes using a string key -> shard mapping (e.g. tenantID, userID, deviceID).
