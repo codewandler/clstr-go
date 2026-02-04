@@ -6,17 +6,12 @@ A distributed **event sourcing framework** for Go, combining three powerful patt
 
 Building distributed systems is hard. You need event persistence, concurrent message handling, and cluster coordination—each complex on its own, even more so together. **clstr** provides production-ready implementations of these patterns that are designed to work seamlessly as a unit.
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                           Your Application                            │
-├───────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────────────┐   │
-│   │   Cluster   │ ───▶ │    Actor    │ ───▶ │   Event Sourcing    │   │
-│   │  (routing)  │      │ (processing)│      │   (persistence)     │   │
-│   └─────────────┘      └─────────────┘      └─────────────────────┘   │
-│                                                                       │
-└───────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph app["Your Application"]
+        direction LR
+        Cluster["Cluster<br/>(routing)"] --> Actor["Actor<br/>(processing)"] --> ES["Event Sourcing<br/>(persistence)"]
+    end
 ```
 
 ## The Three Pillars
