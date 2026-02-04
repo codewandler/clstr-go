@@ -71,6 +71,7 @@ env := es.StartTestEnv(t, options...)
 
 ## Conventions
 
+- Use Mermaid for diagrams in documentation (GitHub renders it natively)
 - `WithXxx()` for option functions
 - `NewXxx()` for constructors
 - `Typed*` prefix for generic wrappers (e.g., `TypedRepository[T]`)
