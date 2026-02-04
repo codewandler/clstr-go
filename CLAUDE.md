@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **[core/es/README.md](./core/es/README.md)** — Event Sourcing package documentation
 - **[core/actor/README.md](./core/actor/README.md)** — Actor Model package documentation
 - **[core/cluster/README.md](./core/cluster/README.md)** — Cluster package documentation
+- **[core/app/README.md](./core/app/README.md)** — High-level App convenience wrapper
 - **[adapters/prometheus/README.md](./adapters/prometheus/README.md)** — Prometheus metrics adapter
 
 ## Build/Test Commands
