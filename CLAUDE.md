@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Documentation
+
+- **[README.md](./README.md)** — Project overview and why the three pillars work together
+- **[core/es/README.md](./core/es/README.md)** — Event Sourcing package documentation
+- **[core/actor/README.md](./core/actor/README.md)** — Actor Model package documentation
+- **[core/cluster/README.md](./core/cluster/README.md)** — Cluster package documentation
+
 ## Build/Test Commands
 
 ```bash
@@ -29,6 +36,8 @@ This is a distributed **event sourcing framework** for Go with NATS JetStream as
 - **`cache/`** - Cache interface with LRU and no-op implementations
 - **`perkey/`** - Per-key serialization scheduler (sequential per key, concurrent across keys)
 - **`sf/`** - Single-flight pattern
+- **`ds/`** - Generic data structures (ordered Set)
+- **`reflector/`** - Type reflection utilities for event/message type naming
 
 ### Adapters (`adapters/`)
 
@@ -37,13 +46,6 @@ This is a distributed **event sourcing framework** for Go with NATS JetStream as
 ### Ports (`ports/`)
 
 - **`kv/`** - Key-value store abstraction with in-memory implementation
-
-### Internal (`internal/`)
-
-- `reflector/` - Type reflection utilities
-- `shard/` - Sharding logic
-- `hrw/` - Rendezvous hashing
-- `codec/` - Encoding/decoding
 
 ## Key Patterns
 
