@@ -110,3 +110,37 @@ func TestActor_scheduler(t *testing.T) {
 	require.Equal(t, int32(10), c1.Load())
 	require.Equal(t, int32(20), c2.Load())
 }
+
+func TestActor_self_request_prevented(t *testing.T) {
+	type (
+		trigger struct{}
+		nested  struct{}
+	)
+
+	errCh := make(chan error, 1)
+
+	a := newTestActor(
+		t,
+		HandleMsg[trigger](func(hc HandlerCtx, _ trigger) error {
+			// Attempt to send a request back to ourselves - this should fail
+			_, err := hc.Request(hc, nested{})
+			errCh <- err
+			return nil
+		}),
+		HandleMsg[nested](func(hc HandlerCtx, _ nested) error {
+			// This should never be reached
+			t.Error("nested handler should not be called")
+			return nil
+		}),
+	)
+
+	// Trigger the self-request attempt
+	require.NoError(t, Publish(t.Context(), a, trigger{}))
+
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, ErrSelfRequest)
+	case <-time.After(time.Second):
+		t.Fatal("timeout - likely deadlocked")
+	}
+}

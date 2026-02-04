@@ -167,32 +167,27 @@ func (m tickMsg) MsgType() string { return m.mt }
 
 func HandleEvery(interval time.Duration, msgHandler func(h HandlerCtx) error) HandlerRegistration {
 	msg := tickMsg{mt: "tick/" + gonanoid.Must()}
-	tmr := time.NewTicker(interval)
-	tmr.Stop()
-	start := func() {
-		tmr.Reset(interval)
-	}
-	var sendReq func(context.Context, any) (any, error)
-	go func() {
 
-		defer tmr.Stop()
-		for {
-			select {
-			case <-tmr.C:
-				if _, err := sendReq(context.Background(), msg); err != nil {
-					slog.Default().Error("failed to send tick message", slog.Any("error", err))
-				}
-			}
-		}
-	}()
 	return HandleMsgWithOpts[tickMsg](
 		func(h HandlerCtx, tick tickMsg) error {
 			return msgHandler(h)
 		},
 		WithMessageType(msg.MsgType()),
 		WithInitFunc(func(hc HandlerCtx) error {
-			sendReq = hc.Request
-			start()
+			tmr := time.NewTicker(interval)
+			go func() {
+				defer tmr.Stop()
+				for {
+					select {
+					case <-hc.Done():
+						return
+					case <-tmr.C:
+						if _, err := hc.Request(hc, msg); err != nil {
+							slog.Default().Warn("failed to send tick message", slog.Any("error", err))
+						}
+					}
+				}
+			}()
 			return nil
 		}),
 	)

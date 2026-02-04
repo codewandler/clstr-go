@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"sync"
+
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type (
@@ -49,7 +51,15 @@ type Options struct {
 	MaxConcurrentTasks int
 }
 
+// actorIDKey is used to detect self-requests via context.
+type actorIDKey struct{}
+
+// ErrSelfRequest is returned when an actor attempts to send a request to itself,
+// which would cause a deadlock.
+var ErrSelfRequest = errors.New("self-request would deadlock: actor cannot send request to itself")
+
 type BaseActor struct {
+	id  string
 	ctx context.Context
 	log *slog.Logger
 
@@ -97,7 +107,10 @@ func New(opt Options, handler RawHandler) Actor {
 		ctx = context.Background()
 	}
 
+	actorID := gonanoid.Must()
+
 	a := &BaseActor{
+		id:      actorID,
 		ctx:     ctx,
 		log:     log,
 		mailbox: make(chan Envelope, opt.MailboxSize),
@@ -108,19 +121,26 @@ func New(opt Options, handler RawHandler) Actor {
 	}
 
 	// Set up scheduler used by handler context
-
 	hCtx := &handlerCtx{
-		request: func(ctx context.Context, req any) (any, error) {
+		request: func(reqCtx context.Context, req any) (any, error) {
+			// Check for self-request: if the request context contains our actor ID,
+			// it means a handler is trying to send a request back to the same actor.
+			// This is set only during handler execution (see safeHandle).
+			if id, ok := reqCtx.Value(actorIDKey{}).(string); ok && id == actorID {
+				return nil, ErrSelfRequest
+			}
+
 			data, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
 			}
 
-			return RawRequest(ctx, a, msgTypeOf(req), data)
+			return RawRequest(reqCtx, a, msgTypeOf(req), data)
 		},
 		log:     log,
 		Context: ctx,
-		sched:   NewScheduler(opt.MaxConcurrentTasks),
+		sched:   NewScheduler(opt.MaxConcurrentTasks, ctx),
+		actorID: actorID,
 	}
 
 	go a.loop(hCtx, handler)
@@ -213,25 +233,33 @@ func (a *BaseActor) sendCtrl(k ctrlKind) error {
 	}
 }
 
-func (a *BaseActor) loop(hc HandlerCtx, h RawHandler) {
-	defer close(a.done)
+func (a *BaseActor) loop(hc *handlerCtx, h RawHandler) {
+	defer func() {
+		// Wait for all scheduled tasks to complete before signaling done
+		hc.waitScheduled()
+		close(a.done)
+	}()
 
 	// execution state lives only in this goroutine
 	paused := false
 	stepMode := false
 	permit := 1 // when >0, actor may process one message; in run mode we auto-renew
 
+	// Create handler-scoped context that marks self-requests during handler execution.
+	// This prevents deadlocks when a handler tries to Request() back to the same actor.
+	handlerScopedCtx := hc.withHandlerScope()
+
 	// helper: call handler with crash containment
-	safeHandle := func(mt string, data []byte) (any, error) {
+	safeHandle := func(msg Envelope) (any, error) {
 		defer func() {
 			if r := recover(); r != nil {
 				if a.onPanic != nil {
-					a.onPanic(r, debug.Stack(), nil)
+					a.onPanic(r, debug.Stack(), msg)
 				}
 				// containment: keep running
 			}
 		}()
-		return h.HandleMessage(hc, mt, data)
+		return h.HandleMessage(handlerScopedCtx, msg.Type, msg.Data)
 	}
 
 	// helper: drain all pending control msgs (priority)
@@ -345,7 +373,7 @@ func (a *BaseActor) loop(hc HandlerCtx, h RawHandler) {
 			handled = false
 		case msg := <-a.mailbox:
 			permit--
-			res, err := safeHandle(msg.Type, msg.Data)
+			res, err := safeHandle(msg)
 			msg.Reply <- Reply{
 				Result: res,
 				Error:  err,
