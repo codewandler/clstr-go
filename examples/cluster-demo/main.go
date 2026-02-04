@@ -1,14 +1,14 @@
-// Package main demonstrates a distributed actor cluster using NATS JetStream.
+// Package main demonstrates a distributed event-sourced actor cluster using NATS JetStream.
 //
-// This example shows:
-//   - Spinning up NATS via testcontainers
-//   - Creating a multi-node cluster with shard distribution
-//   - Actors handling typed request/response messages
-//   - Client routing requests to the correct shard/node
+// This example shows all three pillars of clstr working together:
+//   - Cluster: Routes requests to the correct node based on account ID
+//   - Actor: Processes messages with mailbox isolation (one actor per account)
+//   - Event Sourcing: Persists account state as a sequence of events
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,32 +22,127 @@ import (
 	"github.com/codewandler/clstr-go/adapters/nats"
 	"github.com/codewandler/clstr-go/core/actor/v2"
 	"github.com/codewandler/clstr-go/core/cluster"
+	"github.com/codewandler/clstr-go/core/es"
 )
 
-// Message types for the demo
+// =============================================================================
+// Domain: Account Aggregate (Event Sourcing)
+// =============================================================================
+
+// Account is an event-sourced aggregate representing a bank account.
+type Account struct {
+	es.BaseAggregate
+	balance int
+	owner   string
+}
+
+func (a *Account) GetAggType() string { return "account" }
+
+func (a *Account) Register(r es.Registrar) {
+	es.RegisterEventFor[AccountOpened](r)
+	es.RegisterEventFor[MoneyDeposited](r)
+	es.RegisterEventFor[MoneyWithdrawn](r)
+}
+
+func (a *Account) Apply(evt any) error {
+	switch e := evt.(type) {
+	case *es.AggregateCreatedEvent:
+		return a.BaseAggregate.Apply(evt)
+	case *AccountOpened:
+		a.owner = e.Owner
+		a.balance = e.InitialBalance
+	case *MoneyDeposited:
+		a.balance += e.Amount
+	case *MoneyWithdrawn:
+		a.balance -= e.Amount
+	default:
+		return fmt.Errorf("unknown event: %T", evt)
+	}
+	return nil
+}
+
+// Open initializes the account with an owner.
+func (a *Account) Open(owner string, initialBalance int) error {
+	if a.IsCreated() {
+		return fmt.Errorf("account already exists")
+	}
+	if err := a.Create(a.GetID()); err != nil {
+		return err
+	}
+	return es.RaiseAndApply(a, &AccountOpened{Owner: owner, InitialBalance: initialBalance})
+}
+
+// Deposit adds money to the account.
+func (a *Account) Deposit(amount int) error {
+	if amount <= 0 {
+		return fmt.Errorf("deposit amount must be positive")
+	}
+	return es.RaiseAndApply(a, &MoneyDeposited{Amount: amount})
+}
+
+// Withdraw removes money from the account.
+func (a *Account) Withdraw(amount int) error {
+	if amount <= 0 {
+		return fmt.Errorf("withdrawal amount must be positive")
+	}
+	if a.balance < amount {
+		return fmt.Errorf("insufficient funds: balance=%d, requested=%d", a.balance, amount)
+	}
+	return es.RaiseAndApply(a, &MoneyWithdrawn{Amount: amount})
+}
+
+func (a *Account) Balance() int { return a.balance }
+func (a *Account) Owner() string { return a.owner }
+
+// Events
 type (
-	// GreetRequest asks an actor to greet someone.
-	GreetRequest struct {
-		Name string `json:"name"`
+	AccountOpened struct {
+		Owner          string `json:"owner"`
+		InitialBalance int    `json:"initial_balance"`
 	}
-	// GreetResponse is the greeting reply.
-	GreetResponse struct {
-		Message string `json:"message"`
+	MoneyDeposited struct {
+		Amount int `json:"amount"`
 	}
-
-	// CountRequest increments a counter and returns the new value.
-	CountRequest struct{}
-	// CountResponse returns the current count.
-	CountResponse struct {
-		Count int `json:"count"`
+	MoneyWithdrawn struct {
+		Amount int `json:"amount"`
 	}
 )
+
+// =============================================================================
+// Commands & Responses (Actor Messages)
+// =============================================================================
+
+type (
+	OpenAccount struct {
+		Owner          string `json:"owner"`
+		InitialBalance int    `json:"initial_balance"`
+	}
+	DepositMoney struct {
+		Amount int `json:"amount"`
+	}
+	WithdrawMoney struct {
+		Amount int `json:"amount"`
+	}
+	GetBalance      struct{}
+	BalanceResponse struct {
+		Balance int    `json:"balance"`
+		Owner   string `json:"owner"`
+	}
+)
+
+// =============================================================================
+// Configuration
+// =============================================================================
 
 const (
 	numNodes  = 3
 	numShards = 64
 	seed      = "demo-cluster"
 )
+
+// =============================================================================
+// Main
+// =============================================================================
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -72,7 +167,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer cleanup()
 	log.Info("NATS ready", slog.String("url", natsURL))
 
-	// Create transports for each node (each node needs its own transport connection)
+	// Create event sourcing environment (shared across all nodes)
+	esEnv, err := createEventSourcingEnv(ctx, log, natsURL)
+	if err != nil {
+		return fmt.Errorf("create es env: %w", err)
+	}
+	defer esEnv.Shutdown()
+
+	// Create typed repository for accounts
+	accountRepo := es.NewTypedRepositoryFrom[*Account](log, esEnv.Repository())
+
+	// Create transports for each node
 	transports := make([]*nats.Transport, numNodes)
 	for i := range numNodes {
 		tr, err := nats.NewTransport(nats.TransportConfig{
@@ -111,7 +216,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Transport: transports[i],
 			Shards:    shards,
 			Log:       log.With(slog.String("node", nodeID)),
-			Handler:   createActorHandler(nodeCtx, log.With(slog.String("node", nodeID))),
+			Handler:   createAccountHandler(nodeCtx, log.With(slog.String("node", nodeID)), accountRepo),
 		})
 
 		wg.Add(1)
@@ -128,7 +233,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	// Create a client
 	client, err := cluster.NewClient(cluster.ClientOptions{
-		Transport: transports[0], // Reuse first node's transport for client
+		Transport: transports[0],
 		NumShards: numShards,
 		Seed:      seed,
 	})
@@ -136,48 +241,47 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("create client: %w", err)
 	}
 
-	// Demo: send requests to different keys (will be routed to different actors/shards)
-	log.Info("sending demo requests...")
+	// ==========================================================================
+	// Demo: Event-Sourced Accounts
+	// ==========================================================================
+	log.Info("=== Demo: Event-Sourced Bank Accounts ===")
 
-	keys := []string{"alice", "bob", "charlie", "alice", "bob"}
-	for _, key := range keys {
-		scopedClient := client.Key(key)
+	accounts := []string{"alice", "bob", "charlie"}
 
-		// Send greet request
-		greetRes, err := cluster.NewRequest[GreetRequest, GreetResponse](scopedClient).
-			Request(ctx, GreetRequest{Name: key})
-		if err != nil {
-			return fmt.Errorf("greet %s: %w", key, err)
+	// Open accounts with initial balances
+	log.Info("opening accounts...")
+	for _, name := range accounts {
+		if _, err := cluster.NewRequest[OpenAccount, BalanceResponse](client.Key(name)).
+			Request(ctx, OpenAccount{Owner: name, InitialBalance: 100}); err != nil {
+			return fmt.Errorf("open account %s: %w", name, err)
 		}
-		log.Info("greet response",
-			slog.String("key", key),
-			slog.String("message", greetRes.Message),
-		)
-
-		// Send count request
-		countRes, err := cluster.NewRequest[CountRequest, CountResponse](scopedClient).
-			Request(ctx, CountRequest{})
-		if err != nil {
-			return fmt.Errorf("count %s: %w", key, err)
-		}
-		log.Info("count response",
-			slog.String("key", key),
-			slog.Int("count", countRes.Count),
-		)
 	}
 
-	// Demonstrate that actors maintain state per key
-	log.Info("verifying per-key state...")
-	for _, key := range []string{"alice", "bob", "charlie"} {
-		countRes, err := cluster.NewRequest[CountRequest, CountResponse](client.Key(key)).
-			Request(ctx, CountRequest{})
-		if err != nil {
-			return fmt.Errorf("final count %s: %w", key, err)
+	// Perform some transactions
+	log.Info("performing transactions...")
+
+	if _, err := cluster.NewRequest[DepositMoney, BalanceResponse](client.Key("alice")).
+		Request(ctx, DepositMoney{Amount: 50}); err != nil {
+		return fmt.Errorf("deposit: %w", err)
+	}
+
+	if _, err := cluster.NewRequest[WithdrawMoney, BalanceResponse](client.Key("bob")).
+		Request(ctx, WithdrawMoney{Amount: 30}); err != nil {
+		return fmt.Errorf("withdraw: %w", err)
+	}
+
+	if _, err := cluster.NewRequest[DepositMoney, BalanceResponse](client.Key("charlie")).
+		Request(ctx, DepositMoney{Amount: 200}); err != nil {
+		return fmt.Errorf("deposit: %w", err)
+	}
+
+	// Check final balances (demonstrates state reconstruction from events)
+	log.Info("querying final balances...")
+	for _, name := range accounts {
+		if _, err := cluster.NewRequest[GetBalance, BalanceResponse](client.Key(name)).
+			Request(ctx, GetBalance{}); err != nil {
+			return fmt.Errorf("get balance %s: %w", name, err)
 		}
-		log.Info("final count",
-			slog.String("key", key),
-			slog.Int("count", countRes.Count),
-		)
 	}
 
 	log.Info("demo complete, shutting down...")
@@ -187,45 +291,135 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
-// createActorHandler returns a cluster handler that spawns one actor per key.
-// Each actor maintains its own state (counter).
-func createActorHandler(ctx context.Context, log *slog.Logger) cluster.ServerHandlerFunc {
-	return cluster.NewActorHandler(func(key string) (actor.Actor, error) {
-		// Each key gets its own actor with its own state
-		counter := 0
+// =============================================================================
+// Event Sourcing Setup
+// =============================================================================
 
+func createEventSourcingEnv(ctx context.Context, log *slog.Logger, natsURL string) (*es.Env, error) {
+	// Create event store backed by NATS JetStream
+	eventStore, err := nats.NewEventStore(nats.EventStoreConfig{
+		Connect:        nats.ConnectURL(natsURL),
+		Log:            log,
+		SubjectPrefix:  "demo.es",
+		StreamName:     "DEMO_EVENTS",
+		StreamSubjects: []string{"demo.es.>"},
+		MaxAge:         24 * time.Hour,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create event store: %w", err)
+	}
+
+	// Create environment with in-memory snapshotter (production would use NATS KV)
+	env := es.NewEnv(
+		es.WithCtx(ctx),
+		es.WithLog(log),
+		es.WithStore(eventStore),
+		es.WithInMemory(), // For snapshots; in production use nats.NewSnapshotter
+		es.WithAggregates(&Account{}),
+	)
+
+	return env, nil
+}
+
+// =============================================================================
+// Actor Handler
+// =============================================================================
+
+// createAccountHandler returns a cluster handler that spawns one actor per account.
+// Each actor loads/saves its account aggregate via event sourcing.
+func createAccountHandler(ctx context.Context, log *slog.Logger, repo es.TypedRepository[*Account]) cluster.ServerHandlerFunc {
+	return cluster.NewActorHandler(func(accountID string) (actor.Actor, error) {
 		return actor.New(
 			actor.Options{
 				Context:     ctx,
-				Logger:      log.With(slog.String("key", key)),
+				Logger:      log.With(slog.String("account", accountID)),
 				MailboxSize: 256,
 			},
 			actor.TypedHandlers(
-				actor.Init(func(hc actor.HandlerCtx) error {
-					hc.Log().Info("actor initialized")
-					return nil
-				}),
+				actor.HandleRequest[OpenAccount, BalanceResponse](
+					func(hc actor.HandlerCtx, cmd OpenAccount) (*BalanceResponse, error) {
+						// Try to load existing account
+						acc, err := repo.GetByID(hc, accountID)
+						if err == nil {
+							return &BalanceResponse{Balance: acc.Balance(), Owner: acc.Owner()}, nil
+						}
+						if !errors.Is(err, es.ErrAggregateNotFound) {
+							return nil, err
+						}
 
-				actor.HandleRequest[GreetRequest, GreetResponse](
-					func(hc actor.HandlerCtx, req GreetRequest) (*GreetResponse, error) {
-						hc.Log().Debug("handling greet", slog.String("name", req.Name))
-						return &GreetResponse{
-							Message: fmt.Sprintf("Hello, %s! (from actor for key '%s')", req.Name, key),
-						}, nil
+						// Create new account
+						acc = repo.NewWithID(accountID)
+						if err := acc.Open(cmd.Owner, cmd.InitialBalance); err != nil {
+							return nil, err
+						}
+						if err := repo.Save(hc, acc); err != nil {
+							return nil, err
+						}
+
+						hc.Log().Info("opened account", slog.Int("balance", acc.Balance()))
+						return &BalanceResponse{Balance: acc.Balance(), Owner: acc.Owner()}, nil
 					},
 				),
 
-				actor.HandleRequest[CountRequest, CountResponse](
-					func(hc actor.HandlerCtx, _ CountRequest) (*CountResponse, error) {
-						counter++
-						hc.Log().Debug("handling count", slog.Int("count", counter))
-						return &CountResponse{Count: counter}, nil
+				actor.HandleRequest[DepositMoney, BalanceResponse](
+					func(hc actor.HandlerCtx, cmd DepositMoney) (*BalanceResponse, error) {
+						acc, err := repo.GetByID(hc, accountID)
+						if err != nil {
+							return nil, err
+						}
+
+						if err := acc.Deposit(cmd.Amount); err != nil {
+							return nil, err
+						}
+
+						if err := repo.Save(hc, acc); err != nil {
+							return nil, err
+						}
+
+						hc.Log().Info("deposited", slog.Int("amount", cmd.Amount), slog.Int("balance", acc.Balance()))
+						return &BalanceResponse{Balance: acc.Balance(), Owner: acc.Owner()}, nil
+					},
+				),
+
+				actor.HandleRequest[WithdrawMoney, BalanceResponse](
+					func(hc actor.HandlerCtx, cmd WithdrawMoney) (*BalanceResponse, error) {
+						acc, err := repo.GetByID(hc, accountID)
+						if err != nil {
+							return nil, err
+						}
+
+						if err := acc.Withdraw(cmd.Amount); err != nil {
+							return nil, err
+						}
+
+						if err := repo.Save(hc, acc); err != nil {
+							return nil, err
+						}
+
+						hc.Log().Info("withdrew", slog.Int("amount", cmd.Amount), slog.Int("balance", acc.Balance()))
+						return &BalanceResponse{Balance: acc.Balance(), Owner: acc.Owner()}, nil
+					},
+				),
+
+				actor.HandleRequest[GetBalance, BalanceResponse](
+					func(hc actor.HandlerCtx, _ GetBalance) (*BalanceResponse, error) {
+						acc, err := repo.GetByID(hc, accountID)
+						if err != nil {
+							return nil, err
+						}
+
+						hc.Log().Info("get balance", slog.Int("balance", acc.Balance()))
+						return &BalanceResponse{Balance: acc.Balance(), Owner: acc.Owner()}, nil
 					},
 				),
 			),
 		), nil
 	})
 }
+
+// =============================================================================
+// Infrastructure
+// =============================================================================
 
 func startNATSContainer(ctx context.Context, log *slog.Logger) (string, func(), error) {
 	natsC, err := testcontainers.Run(

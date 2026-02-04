@@ -6,6 +6,7 @@ tasks:
   test:
     cmds:
       - go test -v -count=1 -race -failfast ./...
+      - cd examples/cluster-demo && go run .
 
   fix:
     cmds:
