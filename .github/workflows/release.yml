@@ -1,0 +1,126 @@
+name: Test and Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test -v -count=1 -race -failfast ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          latest=$(git tag --list --sort=-v:refname 'v*' | head -n1)
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+          fi
+          echo "tag=$latest" >> $GITHUB_OUTPUT
+          echo "Latest tag: $latest"
+
+      - name: Determine version bump
+        id: bump
+        run: |
+          latest_tag="${{ steps.latest_tag.outputs.tag }}"
+
+          # Get commits since last tag
+          if git rev-parse "$latest_tag" >/dev/null 2>&1; then
+            commits=$(git log "$latest_tag"..HEAD --pretty=format:"%s" --no-merges)
+          else
+            commits=$(git log --pretty=format:"%s" --no-merges)
+          fi
+
+          if [ -z "$commits" ]; then
+            echo "No new commits since last tag"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Commits since $latest_tag:"
+          echo "$commits"
+          echo ""
+
+          # Determine bump type from conventional commits
+          bump="none"
+
+          # Check for breaking changes (major)
+          if echo "$commits" | grep -qE '^[a-z]+(\([^)]+\))?!:|BREAKING CHANGE'; then
+            bump="major"
+          # Check for features (minor)
+          elif echo "$commits" | grep -qE '^feat(\([^)]+\))?:'; then
+            bump="minor"
+          # Check for fixes, perf, refactor, etc. (patch)
+          elif echo "$commits" | grep -qE '^(fix|perf|refactor|docs|style|chore|test|ci|build)(\([^)]+\))?:'; then
+            bump="patch"
+          fi
+
+          if [ "$bump" = "none" ]; then
+            echo "No conventional commits found, skipping release"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Bump type: $bump"
+          echo "bump=$bump" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Calculate new version
+        id: new_version
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          latest_tag="${{ steps.latest_tag.outputs.tag }}"
+          bump="${{ steps.bump.outputs.bump }}"
+
+          # Strip 'v' prefix and split version
+          version="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+
+          case "$bump" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          new_version="v${major}.${minor}.${patch}"
+          echo "New version: $new_version"
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        if: steps.bump.outputs.skip != 'true'
+        run: |
+          new_version="${{ steps.new_version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$new_version" -m "Release $new_version"
+          git push origin "$new_version"
+          echo "Created and pushed tag: $new_version"
