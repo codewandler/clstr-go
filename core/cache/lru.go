@@ -2,6 +2,7 @@ package cache
 
 import (
 	"container/list"
+	"time"
 )
 
 type LRUOpts struct {
@@ -9,8 +10,13 @@ type LRUOpts struct {
 }
 
 type entry struct {
-	key string
-	val any
+	key       string
+	val       any
+	expiresAt time.Time
+}
+
+func (e *entry) expired(now time.Time) bool {
+	return !e.expiresAt.IsZero() && now.After(e.expiresAt)
 }
 
 type getReq struct {
@@ -29,20 +35,44 @@ type putReq struct {
 	opts []PutOption
 }
 
+type delReq struct {
+	key string
+}
+
 type LRU struct {
-	getCh chan getReq
-	putCh chan putReq
+	getCh  chan getReq
+	putCh  chan putReq
+	delCh  chan delReq
+	doneCh chan struct{}
 }
 
 func (L *LRU) Get(key string) (any, bool) {
 	resp := make(chan getResp)
-	L.getCh <- getReq{key: key, resp: resp}
-	r := <-resp
-	return r.val, r.ok
+	select {
+	case L.getCh <- getReq{key: key, resp: resp}:
+		r := <-resp
+		return r.val, r.ok
+	case <-L.doneCh:
+		return nil, false
+	}
 }
 
 func (L *LRU) Put(key string, val any, opts ...PutOption) {
-	L.putCh <- putReq{key: key, val: val, opts: opts}
+	select {
+	case L.putCh <- putReq{key: key, val: val, opts: opts}:
+	case <-L.doneCh:
+	}
+}
+
+func (L *LRU) Delete(key string) {
+	select {
+	case L.delCh <- delReq{key: key}:
+	case <-L.doneCh:
+	}
+}
+
+func (L *LRU) Close() {
+	close(L.doneCh)
 }
 
 func NewLRU(opts LRUOpts) *LRU {
@@ -51,8 +81,10 @@ func NewLRU(opts LRUOpts) *LRU {
 	}
 
 	l := &LRU{
-		getCh: make(chan getReq),
-		putCh: make(chan putReq),
+		getCh:  make(chan getReq),
+		putCh:  make(chan putReq),
+		delCh:  make(chan delReq),
+		doneCh: make(chan struct{}),
 	}
 
 	go l.run(opts.Size)
@@ -66,19 +98,40 @@ func (L *LRU) run(size int) {
 
 	for {
 		select {
+		case <-L.doneCh:
+			return
 		case req := <-L.getCh:
 			if ele, ok := cache[req.key]; ok {
-				ll.MoveToFront(ele)
-				req.resp <- getResp{val: ele.Value.(*entry).val, ok: true}
+				e := ele.Value.(*entry)
+				if e.expired(time.Now()) {
+					ll.Remove(ele)
+					delete(cache, req.key)
+					req.resp <- getResp{ok: false}
+				} else {
+					ll.MoveToFront(ele)
+					req.resp <- getResp{val: e.val, ok: true}
+				}
 			} else {
 				req.resp <- getResp{ok: false}
 			}
 		case req := <-L.putCh:
+			var po PutOptions
+			for _, opt := range req.opts {
+				opt(&po)
+			}
+
+			var expiresAt time.Time
+			if po.TTL > 0 {
+				expiresAt = time.Now().Add(po.TTL)
+			}
+
 			if ele, ok := cache[req.key]; ok {
 				ll.MoveToFront(ele)
-				ele.Value.(*entry).val = req.val
+				e := ele.Value.(*entry)
+				e.val = req.val
+				e.expiresAt = expiresAt
 			} else {
-				ele := ll.PushFront(&entry{key: req.key, val: req.val})
+				ele := ll.PushFront(&entry{key: req.key, val: req.val, expiresAt: expiresAt})
 				cache[req.key] = ele
 				if ll.Len() > size {
 					last := ll.Back()
@@ -87,6 +140,11 @@ func (L *LRU) run(size int) {
 						delete(cache, last.Value.(*entry).key)
 					}
 				}
+			}
+		case req := <-L.delCh:
+			if ele, ok := cache[req.key]; ok {
+				ll.Remove(ele)
+				delete(cache, req.key)
 			}
 		}
 	}

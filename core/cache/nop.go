@@ -9,6 +9,9 @@ func (n *Nop) Get(key string) (any, bool) {
 func (n *Nop) Put(key string, val any, opts ...PutOption) {
 }
 
+func (n *Nop) Delete(key string) {
+}
+
 func NewNop() *Nop {
 	return &Nop{}
 }

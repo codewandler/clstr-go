@@ -17,11 +17,13 @@ func WithTTL(ttl time.Duration) PutOption {
 type Cache interface {
 	Get(key string) (any, bool)
 	Put(key string, val any, opts ...PutOption)
+	Delete(key string)
 }
 
 type TypedCache[T any] interface {
 	Put(key string, val T, opts ...PutOption)
 	Get(key string) (T, bool)
+	Delete(key string)
 }
 
 type typedCache[T any] struct {
@@ -45,6 +47,10 @@ func (t *typedCache[T]) Get(key string) (out T, ok bool) {
 
 func (t *typedCache[T]) Put(key string, val T, opts ...PutOption) {
 	t.c.Put(key, val, opts...)
+}
+
+func (t *typedCache[T]) Delete(key string) {
+	t.c.Delete(key)
 }
 
 var _ TypedCache[any] = (*typedCache[any])(nil)
