@@ -91,7 +91,7 @@ func (a *Account) Withdraw(amount int) error {
 	return es.RaiseAndApply(a, &MoneyWithdrawn{Amount: amount})
 }
 
-func (a *Account) Balance() int { return a.balance }
+func (a *Account) Balance() int  { return a.balance }
 func (a *Account) Owner() string { return a.owner }
 
 // Events
