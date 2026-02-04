@@ -2,6 +2,10 @@ package es
 
 import "log/slog"
 
+// Version represents the version number of an aggregate within its stream.
+// It is a monotonically increasing value starting from 1 for the first event.
+// Version is used for optimistic concurrency control - when saving changes,
+// the expected version must match the current version in the store.
 type Version uint64
 
 func (v Version) Uint64() uint64                         { return uint64(v) }

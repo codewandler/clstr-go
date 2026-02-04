@@ -47,15 +47,31 @@ func (o StartSeqOption) ApplyToStoreLoadOptions(receiver storeLoadOptionsReceive
 	receiver.SetStartSeq(o.v)
 }
 
-// EventStore stores and loads envelopes per aggregate stream.
 type (
+	// StoreAppendResult contains the result of appending events to the store.
 	StoreAppendResult struct {
+		// LastSeq is the global sequence number assigned to the last appended event.
 		LastSeq uint64
 	}
 
+	// EventStore is the persistence interface for event sourcing.
+	// It provides operations for loading and appending events to aggregate streams,
+	// as well as subscribing to the global event stream for consumers.
+	//
+	// Implementations must guarantee:
+	//   - Atomic append of multiple events within a single Append call
+	//   - Optimistic concurrency via expectedVersion check
+	//   - Ordered delivery of events by sequence number in subscriptions
 	EventStore interface {
+		// Stream provides subscription capabilities for consumers.
 		Stream
+
+		// Load retrieves events for a specific aggregate stream.
+		// Events are returned in version order. Use opts to filter by version/sequence.
 		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
+
+		// Append persists events to an aggregate stream with optimistic concurrency.
+		// Returns ErrConcurrencyConflict if expectedVersion doesn't match the current version.
 		Append(ctx context.Context, aggType string, aggID string, expectedVersion Version, events []Envelope) (*StoreAppendResult, error)
 	}
 )

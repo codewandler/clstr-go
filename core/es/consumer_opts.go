@@ -3,29 +3,35 @@ package es
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type (
 	consumerOpts struct {
-		startSeq uint64
-		mws      []HandlerMiddleware
-		log      *slog.Logger
-		name     string
+		startSeq        uint64
+		mws             []HandlerMiddleware
+		log             *slog.Logger
+		name            string
+		shutdownTimeout time.Duration
 	}
 
 	ConsumerOption interface {
 		applyToConsumerOpts(*consumerOpts)
 	}
 
-	ConsumerNameOption valueOption[string]
-	MiddlewareOption   valueOption[[]HandlerMiddleware]
-	ConsumerOptions    MultiOption[ConsumerOption]
+	ConsumerNameOption            valueOption[string]
+	MiddlewareOption              valueOption[[]HandlerMiddleware]
+	ConsumerOptions               MultiOption[ConsumerOption]
+	ConsumerShutdownTimeoutOption valueOption[time.Duration]
 )
 
 func (o ConsumerNameOption) applyToConsumerOpts(opts *consumerOpts) { opts.name = o.v }
 func (o StartSeqOption) applyToConsumerOpts(opts *consumerOpts)     { opts.startSeq = o.v }
+func (o ConsumerShutdownTimeoutOption) applyToConsumerOpts(opts *consumerOpts) {
+	opts.shutdownTimeout = o.v
+}
 func (o MiddlewareOption) applyToConsumerOpts(opts *consumerOpts) {
 	opts.mws = append(opts.mws, o.v...)
 }
@@ -49,11 +55,18 @@ func WithMiddlewaresAppend(mws ...HandlerMiddleware) MiddlewareOption {
 func WithConsumerOpts(opts ...ConsumerOption) ConsumerOptions { return ConsumerOptions{opts: opts} }
 func WithConsumerName(name string) ConsumerNameOption         { return ConsumerNameOption{name} }
 
+// WithShutdownTimeout sets the timeout for handler shutdown when the consumer stops.
+// Default is 5 seconds.
+func WithShutdownTimeout(d time.Duration) ConsumerShutdownTimeoutOption {
+	return ConsumerShutdownTimeoutOption{v: d}
+}
+
 func newConsumerOpts(opts ...ConsumerOption) consumerOpts {
 	options := consumerOpts{
-		log:      slog.Default(),
-		startSeq: 1,
-		name:     fmt.Sprintf("consumer-%s", gonanoid.Must(6)),
+		log:             slog.Default(),
+		startSeq:        1,
+		name:            fmt.Sprintf("consumer-%s", gonanoid.Must(6)),
+		shutdownTimeout: 5 * time.Second,
 	}
 	for _, opt := range opts {
 		opt.applyToConsumerOpts(&options)

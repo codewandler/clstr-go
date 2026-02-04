@@ -9,8 +9,6 @@ import (
 	"reflect"
 	"time"
 
-	gonanoid "github.com/matoous/go-nanoid/v2"
-
 	"github.com/codewandler/clstr-go/core/cache"
 	"github.com/codewandler/clstr-go/core/perkey"
 )
@@ -23,12 +21,13 @@ type (
 	}
 )
 
-// Repository rehydrates aggregates and persists new events with optimistic concurrency.
+// repository rehydrates aggregates and persists new events with optimistic concurrency.
 type repository struct {
 	log         *slog.Logger
 	store       EventStore
 	registry    *EventRegistry
 	snapshotter Snapshotter
+	idGenerator IDGenerator
 }
 
 func NewRepository(
@@ -44,6 +43,7 @@ func NewRepository(
 		store:       store,
 		registry:    registry,
 		snapshotter: options.snapshotter,
+		idGenerator: options.idGenerator,
 	}
 
 	return r
@@ -70,18 +70,6 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		opt.applyToLoadOptions(&loadOptions)
 	}
 
-	/*log := r.log.With(
-		slog.Group(
-			"agg",
-			slog.String("type", aggType),
-			slog.String("id", aggID),
-			//slog.Uint64("seq", curSeq),
-			//slog.Int("version", curVersion),
-		),
-	)
-
-	log.Debug("loading")*/
-
 	// load from snapshot
 	if loadOptions.snapshot {
 		if r.snapshotter == nil {
@@ -92,12 +80,6 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 			if !errors.Is(err, ErrSnapshotNotFound) {
 				return fmt.Errorf("failed to apply snapshot: %w", err)
 			}
-		} else {
-			/*log.Debug(
-				"snapshot applied",
-				slog.Uint64("seq", agg.GetSeq()),
-				agg.GetVersion().SlogAttr(),
-			)*/
 		}
 	}
 
@@ -107,25 +89,6 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		minVersion = curVersion + 1
 		minSeq     = curSeq + 1
 	)
-
-	/*log = r.log.With(
-		slog.Group(
-			"agg",
-			slog.String("type", aggType),
-			slog.String("id", aggID),
-			slog.Uint64("seq", curSeq),
-			curVersion.SlogAttr(),
-		),
-	)*/
-
-	/*log.Debug(
-		"load",
-		slog.Group("opts",
-			slog.Uint64("min_seq", minSeq),
-			minVersion.SlogAttrWithKey("min_version"),
-			slog.Bool("snapshot", loadOptions.snapshot),
-		),
-	)*/
 
 	// load all events
 	loaded, err := r.store.Load(
@@ -201,8 +164,7 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 		v++
 
 		env := Envelope{
-			// TODO: allow ID generator
-			ID:            gonanoid.Must(),
+			ID:            r.idGenerator(),
 			Type:          getEventTypeOf(ev),
 			AggregateID:   aggID,
 			AggregateType: aggType,

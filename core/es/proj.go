@@ -26,10 +26,34 @@ type SnapshottableProjection interface {
 	Snapshottable
 }
 
+// SnapshotProjectionOption configures a SnapshotProjection.
+type SnapshotProjectionOption interface {
+	applyToSnapshotProjection(*snapshotProjectionOpts)
+}
+
+type snapshotProjectionOpts struct {
+	snapshotFrequency uint64
+}
+
+type snapshotFrequencyOption struct{ v uint64 }
+
+func (o snapshotFrequencyOption) applyToSnapshotProjection(opts *snapshotProjectionOpts) {
+	opts.snapshotFrequency = o.v
+}
+
+// WithSnapshotFrequency sets how often (in events) snapshots are taken in live mode.
+// Default is 10 events.
+func WithSnapshotFrequency(n uint64) SnapshotProjectionOption {
+	return snapshotFrequencyOption{v: n}
+}
+
+// SnapshotProjection wraps a SnapshottableProjection and provides automatic
+// snapshotting at configurable intervals during live mode.
 type SnapshotProjection[T SnapshottableProjection] struct {
 	log                        *slog.Logger
 	inner                      T
 	snapshotter                Snapshotter
+	snapshotFrequency          uint64
 	persistedLastSeq           uint64
 	persistedProjectionVersion Version
 }
@@ -65,7 +89,7 @@ func (p *SnapshotProjection[T]) Handle(msgCtx MsgCtx) error {
 		return err
 	}
 
-	if msgCtx.Live() && seq%10 == 0 {
+	if msgCtx.Live() && p.snapshotFrequency > 0 && seq%p.snapshotFrequency == 0 {
 		err = p.snapshot(msgCtx)
 		if err != nil {
 			return err
@@ -136,6 +160,7 @@ func NewSnapshotProjection[T SnapshottableProjection](
 	log *slog.Logger,
 	innerProjection T,
 	snapshotter Snapshotter,
+	opts ...SnapshotProjectionOption,
 ) (*SnapshotProjection[T], error) {
 	if any(innerProjection) == nil {
 		return nil, fmt.Errorf("inner projection is required")
@@ -144,10 +169,18 @@ func NewSnapshotProjection[T SnapshottableProjection](
 		return nil, fmt.Errorf("snapshotter is required")
 	}
 
+	options := snapshotProjectionOpts{
+		snapshotFrequency: 10, // default: snapshot every 10 events
+	}
+	for _, opt := range opts {
+		opt.applyToSnapshotProjection(&options)
+	}
+
 	p := &SnapshotProjection[T]{
-		snapshotter: snapshotter,
-		inner:       innerProjection,
-		log:         log.With(slog.String("projection", innerProjection.Name())),
+		snapshotter:       snapshotter,
+		inner:             innerProjection,
+		snapshotFrequency: options.snapshotFrequency,
+		log:               log.With(slog.String("projection", innerProjection.Name())),
 	}
 
 	return p, nil

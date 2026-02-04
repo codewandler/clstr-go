@@ -3,8 +3,18 @@ package es
 import (
 	"time"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
+
 	"github.com/codewandler/clstr-go/core/cache"
 )
+
+// IDGenerator is a function that generates unique IDs for events.
+type IDGenerator func() string
+
+// DefaultIDGenerator returns the default ID generator using nanoid.
+func DefaultIDGenerator() IDGenerator {
+	return func() string { return gonanoid.Must() }
+}
 
 type (
 	repoOpts struct {
@@ -12,6 +22,7 @@ type (
 		cache       cache.Cache
 		saveOpts    []SaveOption
 		loadOpts    []LoadOption
+		idGenerator IDGenerator
 	}
 
 	repoSaveOptions struct {
@@ -37,12 +48,13 @@ type (
 )
 
 type (
-	RepositoryOption   interface{ applyToRepository(*repoOpts) }
-	RepoCacheOption    valueOption[cache.Cache]
-	RepoCreateOption   valueOption[bool]
-	RepoUseCacheOption valueOption[bool]
-	SaveOptsOption     MultiOption[SaveOption]
-	LoadOptsOption     MultiOption[LoadOption]
+	RepositoryOption      interface{ applyToRepository(*repoOpts) }
+	RepoCacheOption       valueOption[cache.Cache]
+	RepoCreateOption      valueOption[bool]
+	RepoUseCacheOption    valueOption[bool]
+	SaveOptsOption        MultiOption[SaveOption]
+	LoadOptsOption        MultiOption[LoadOption]
+	RepoIDGeneratorOption valueOption[IDGenerator]
 )
 
 type (
@@ -60,10 +72,16 @@ func WithRepoCacheLRU(size int) RepoCacheOption {
 	return WithRepoCache(cache.NewLRU(cache.LRUOpts{Size: size}))
 }
 
+// WithIDGenerator sets a custom ID generator for event envelope IDs.
+func WithIDGenerator(gen IDGenerator) RepoIDGeneratorOption {
+	return RepoIDGeneratorOption{v: gen}
+}
+
 // === repo ==
 
-func (o SnapshotterOption) applyToRepository(options *repoOpts) { options.snapshotter = o.v }
-func (o RepoCacheOption) applyToRepository(options *repoOpts)   { options.cache = o.v }
+func (o SnapshotterOption) applyToRepository(options *repoOpts)     { options.snapshotter = o.v }
+func (o RepoCacheOption) applyToRepository(options *repoOpts)       { options.cache = o.v }
+func (o RepoIDGeneratorOption) applyToRepository(options *repoOpts) { options.idGenerator = o.v }
 func (o SaveOptsOption) applyToRepository(options *repoOpts) {
 	options.saveOpts = append(options.saveOpts, o.opts...)
 }
@@ -77,6 +95,7 @@ func newRepoOpts(opts ...RepositoryOption) repoOpts {
 		snapshotter: NewInMemorySnapshotter(),
 		saveOpts:    []SaveOption{WithUseCache(true)},
 		loadOpts:    []LoadOption{WithUseCache(true)},
+		idGenerator: DefaultIDGenerator(),
 	}
 	for _, opt := range opts {
 		opt.applyToRepository(&options)

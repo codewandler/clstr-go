@@ -20,31 +20,56 @@ type (
 	AggregateDeleted struct{}
 )
 
+// Applier is the interface for types that can apply events to update their state.
 type Applier interface {
 	Apply(event any) error
 }
 
-// Aggregate is the minimal contract the repository needs.
+// Aggregate is the core interface for event-sourced domain objects.
+// It defines the contract that all aggregate roots must implement to work
+// with the Repository for loading and persisting state through events.
+//
+// An aggregate maintains:
+//   - Identity: type and ID that uniquely identify the aggregate stream
+//   - Version: the current version for optimistic concurrency control
+//   - Sequence: the global stream sequence number of the last applied event
+//   - Uncommitted events: events raised but not yet persisted
+//
+// The typical lifecycle is:
+//  1. Create a new aggregate or load an existing one via Repository
+//  2. Execute domain logic that calls Raise() to record events
+//  3. Apply() is called to update internal state from each event
+//  4. Save via Repository which persists uncommitted events and calls ClearUncommitted()
 type Aggregate interface {
+	// GetAggType returns the aggregate type name used for stream identification.
 	GetAggType() string
+	// GetID returns the unique identifier of this aggregate instance.
 	GetID() string
+	// SetID sets the aggregate ID. Typically called during creation.
 	SetID(string)
 
+	// GetVersion returns the current version (number of events applied).
 	GetVersion() Version
 	setVersion(Version)
 
+	// GetSeq returns the global stream sequence of the last applied event.
 	GetSeq() uint64
 	setSeq(uint64)
 
+	// Create initializes a new aggregate with the given ID.
 	Create(id string) error
 
+	// Register registers event types with the provided Registrar.
 	Register(r Registrar)
+	// Raise records an event as uncommitted without applying it.
 	Raise(event any)
+	// Apply updates the aggregate state from an event.
 	Apply(event any) error
 
-	// Uncommitted event tracking
-	Uncommitted() []any // does NOT clear
-	ClearUncommitted()  // clears after successful save
+	// Uncommitted returns a copy of events raised but not yet persisted.
+	Uncommitted() []any
+	// ClearUncommitted removes all uncommitted events after successful save.
+	ClearUncommitted()
 }
 
 type AggregateCreatedEvent struct {

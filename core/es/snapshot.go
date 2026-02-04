@@ -31,32 +31,55 @@ func WithSnapshotTTL(ttl time.Duration) SnapshotTTLOption { return SnapshotTTLOp
 func (o SnapshotterOption) applyToEnv(e *envOptions) { e.snapshotter = o.v }
 
 type (
+	// Snapshot represents a point-in-time capture of an aggregate or projection state.
+	// Snapshots optimize loading by allowing the system to restore state directly
+	// instead of replaying all events from the beginning.
 	Snapshot struct {
-		SnapshotID string `json:"snapshot_id"` // SnapshotID is the unique ID of the snapshot
+		// SnapshotID is the unique identifier of this snapshot.
+		SnapshotID string `json:"snapshot_id"`
 
-		ObjID      string  `json:"obj_id"`      // ObjectID is the ID of the object that was snapshotted
-		ObjType    string  `json:"obj_type"`    // ObjectType is the type of the object that was snapshotted
-		ObjVersion Version `json:"obj_version"` // Version is the version of the object at the time of snapshot
+		// ObjID is the identifier of the snapshotted object (aggregate ID or projection name).
+		ObjID string `json:"obj_id"`
+		// ObjType is the type of the snapshotted object (aggregate type or "projection").
+		ObjType string `json:"obj_type"`
+		// ObjVersion is the version of the object at the time of snapshot.
+		ObjVersion Version `json:"obj_version"`
 
-		StreamSeq uint64 `json:"stream_seq"` // StreamSeq is the global sequence number from the store
+		// StreamSeq is the global stream sequence number at the time of snapshot.
+		// When restoring, events after this sequence are replayed.
+		StreamSeq uint64 `json:"stream_seq"`
 
-		CreatedAt     time.Time `json:"created_at"`
-		SchemaVersion int       `json:"schema_version"`
-		Encoding      string    `json:"encoding"`
-		Data          []byte    `json:"data"`
+		// CreatedAt is when this snapshot was created.
+		CreatedAt time.Time `json:"created_at"`
+		// SchemaVersion tracks the snapshot format for migrations.
+		SchemaVersion int `json:"schema_version"`
+		// Encoding indicates how Data is encoded (typically "json").
+		Encoding string `json:"encoding"`
+		// Data contains the serialized state.
+		Data []byte `json:"data"`
 	}
 
+	// SnapshotSaveOpts configures snapshot persistence.
 	SnapshotSaveOpts struct {
+		// TTL sets the time-to-live for the snapshot. Zero means no expiration.
 		TTL time.Duration
 	}
 
+	// Snapshottable is implemented by types that support custom snapshot serialization.
+	// If not implemented, JSON marshaling is used as a fallback.
 	Snapshottable interface {
+		// Snapshot serializes the current state to bytes.
 		Snapshot() (data []byte, err error)
+		// RestoreSnapshot restores state from previously serialized bytes.
 		RestoreSnapshot(data []byte) error
 	}
 
+	// Snapshotter provides storage operations for snapshots.
 	Snapshotter interface {
+		// SaveSnapshot persists a snapshot with optional TTL.
 		SaveSnapshot(ctx context.Context, snapshot Snapshot, opts SnapshotSaveOpts) error
+		// LoadSnapshot retrieves the latest snapshot for an object.
+		// Returns ErrSnapshotNotFound if no snapshot exists.
 		LoadSnapshot(ctx context.Context, objType, objID string) (Snapshot, error)
 	}
 )

@@ -6,16 +6,28 @@ import (
 	"time"
 )
 
-// Envelope is what gets persisted in the event store.
+// Envelope wraps an event with metadata for persistence and routing.
+// It is the unit of storage in the EventStore and contains all information
+// needed to reconstruct and route events during replay or consumption.
 type Envelope struct {
-	ID            string          `json:"id"`           // ID is the message ID
-	Seq           uint64          `json:"seq"`          // Seq is the global sequence number from the store
-	Version       Version         `json:"version"`      // 1..N, per aggregate stream
-	AggregateType string          `json:"aggregate"`    // AggregateType is the aggregate root type
-	AggregateID   string          `json:"aggregate_id"` // AggregateID is the aggregate root ID
-	Type          string          `json:"type"`         // Type is the type of the event
-	OccurredAt    time.Time       `json:"occurred_at"`
-	Data          json.RawMessage `json:"data"`
+	// ID is the unique identifier of this event envelope.
+	ID string `json:"id"`
+	// Seq is the global sequence number assigned by the store.
+	// This provides total ordering across all events in the store.
+	Seq uint64 `json:"seq"`
+	// Version is the per-aggregate stream version (1, 2, 3, ...).
+	// Used for optimistic concurrency control.
+	Version Version `json:"version"`
+	// AggregateType identifies the type of aggregate this event belongs to.
+	AggregateType string `json:"aggregate"`
+	// AggregateID identifies the specific aggregate instance.
+	AggregateID string `json:"aggregate_id"`
+	// Type is the event type name for deserialization routing.
+	Type string `json:"type"`
+	// OccurredAt is when the event was created.
+	OccurredAt time.Time `json:"occurred_at"`
+	// Data contains the JSON-encoded event payload.
+	Data json.RawMessage `json:"data"`
 }
 
 func (e Envelope) Validate() error {
