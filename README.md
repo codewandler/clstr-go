@@ -147,6 +147,37 @@ env := es.NewEnv(
 - **[cache](./core/cache/)** — LRU cache with TTL support for aggregate caching
 - **[perkey](./core/perkey/)** — Per-key serialization (sequential per key, parallel across keys)
 - **[ds](./core/ds/)** — Generic data structures (ordered Set)
+- **[metrics](./core/metrics/)** — Pluggable metrics interfaces (Counter, Gauge, Histogram, Timer)
+
+## Observability
+
+clstr provides optional **Prometheus metrics** for all three pillars through a pluggable interface pattern:
+
+```go
+import promadapter "github.com/codewandler/clstr-go/adapters/prometheus"
+
+// Initialize metrics for all pillars
+metrics := promadapter.NewAllMetrics(prometheus.DefaultRegisterer)
+
+// Use with ES
+env := es.NewEnv(es.WithMetrics(metrics.ES), ...)
+
+// Use with Actor
+a := actor.New(actor.Options{Metrics: metrics.Actor, ...}, handler)
+
+// Use with Cluster
+client, _ := cluster.NewClient(cluster.ClientOptions{Metrics: metrics.Cluster, ...})
+```
+
+**Available Metrics:**
+
+| Pillar | Metrics |
+|--------|---------|
+| **ES** | Store/repo latencies, events appended, cache hits/misses, consumer lag, concurrency conflicts |
+| **Actor** | Message duration, messages processed, panics, mailbox depth, scheduler inflight |
+| **Cluster** | Request/handler duration, transport errors, shards owned |
+
+See the [Prometheus adapter](./adapters/prometheus/) for detailed documentation.
 
 ## Quick Start
 

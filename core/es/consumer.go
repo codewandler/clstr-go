@@ -61,18 +61,26 @@ type Consumer struct {
 	closeOnce       sync.Once
 	done            chan struct{}
 	shutdownTimeout time.Duration
+	name            string
+	metrics         ESMetrics
 }
 
 func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
+	live := c.isLive.Load()
+
+	// instrument
+	defer c.metrics.ConsumerEventDuration(ev.Type, live).ObserveDuration()
+
 	evt, err := c.decoder.Decode(ev)
 	if err != nil {
+		c.metrics.ConsumerEventProcessed(ev.Type, live, false)
 		return fmt.Errorf("failed to decode event: %w", err)
 	}
 	msgCtx := MsgCtx{
 		ctx:  ctx,
 		ev:   ev,
 		evt:  evt,
-		live: c.isLive.Load(),
+		live: live,
 		log: c.log.With(
 			slog.Group(
 				"event",
@@ -87,8 +95,10 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 		),
 	}
 	if err := c.handler.Handle(msgCtx); err != nil {
+		c.metrics.ConsumerEventProcessed(ev.Type, live, false)
 		return fmt.Errorf("failed to handle event: %w", err)
 	}
+	c.metrics.ConsumerEventProcessed(ev.Type, live, true)
 	return nil
 }
 
@@ -158,6 +168,12 @@ func (c *Consumer) Start(ctx context.Context) error {
 					c.isLive.Store(true)
 					close(c.live)
 				}
+				// report consumer lag
+				if liveAt > ev.Seq {
+					c.metrics.ConsumerLag(c.name, int64(liveAt-ev.Seq))
+				} else {
+					c.metrics.ConsumerLag(c.name, 0)
+				}
 			}
 		}
 	}()
@@ -188,6 +204,12 @@ func NewConsumer(
 		log = slog.Default()
 	}
 	log = log.With(slog.String("consumer", options.name))
+
+	metrics := options.metrics
+	if metrics == nil {
+		metrics = NopESMetrics()
+	}
+
 	return &Consumer{
 		log:             log,
 		store:           store,
@@ -197,5 +219,7 @@ func NewConsumer(
 		live:            make(chan struct{}),
 		handler:         applyMiddlewares(handler, options.mws),
 		shutdownTimeout: options.shutdownTimeout,
+		name:            options.name,
+		metrics:         metrics,
 	}
 }

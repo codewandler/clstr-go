@@ -28,6 +28,7 @@ type repository struct {
 	registry    *EventRegistry
 	snapshotter Snapshotter
 	idGenerator IDGenerator
+	metrics     ESMetrics
 }
 
 func NewRepository(
@@ -38,12 +39,18 @@ func NewRepository(
 ) Repository {
 	options := newRepoOpts(opts...)
 
+	metrics := options.metrics
+	if metrics == nil {
+		metrics = NopESMetrics()
+	}
+
 	r := &repository{
 		log:         log.With(slog.String("repo", fmt.Sprintf("%T", store))),
 		store:       store,
 		registry:    registry,
 		snapshotter: options.snapshotter,
 		idGenerator: options.idGenerator,
+		metrics:     metrics,
 	}
 
 	return r
@@ -63,6 +70,9 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 	if len(agg.Uncommitted()) != 0 {
 		return errors.New("aggregate has uncommitted events (dirty=true)")
 	}
+
+	// instrument
+	defer r.metrics.RepoLoadDuration(aggType).ObserveDuration()
 
 	// populate load options
 	loadOptions := repoLoadOptions{}
@@ -146,6 +156,9 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 		return errors.New("aggregate id is empty")
 	}
 
+	// instrument
+	defer r.metrics.RepoSaveDuration(aggType).ObserveDuration()
+
 	saveOptions := repoSaveOptions{}
 	for _, opt := range saveOpts {
 		opt.applyToSaveOptions(&saveOptions)
@@ -189,12 +202,18 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 		expectVersion,
 		newEnvs,
 	); err != nil {
+		if errors.Is(err, ErrConcurrencyConflict) {
+			r.metrics.ConcurrencyConflict(aggType)
+		}
 		return fmt.Errorf("failed to save agg_type=%s agg_id=%s: %w", aggType, aggID, err)
 	} else if res != nil {
 		agg.setSeq(res.LastSeq)
 	} else {
 		return errors.New("append returned nil result")
 	}
+
+	// record events appended
+	r.metrics.EventsAppended(aggType, len(newEnvs))
 
 	agg.setVersion(v)
 	agg.ClearUncommitted()
@@ -266,6 +285,8 @@ type typedRepo[T Aggregate] struct {
 	pkTrans         *perkey.Scheduler[string]
 	defaultSaveOpts []SaveOption
 	defaultLoadOpts []LoadOption
+	metrics         ESMetrics
+	aggType         string
 }
 
 func (t *typedRepo[T]) New() T { return t.NewWithID("") }
@@ -358,8 +379,10 @@ func (t *typedRepo[T]) GetByID(ctx context.Context, aggID string, opts ...LoadOp
 	if options.useCache {
 		cached, ok := t.cache.Get(aggID)
 		if ok {
+			t.metrics.CacheHit(t.aggType)
 			return cached, nil
 		}
+		t.metrics.CacheMiss(t.aggType)
 	}
 
 	a = t.NewWithID(aggID)
@@ -399,6 +422,16 @@ func NewTypedRepository[T Aggregate](log *slog.Logger, s EventStore, reg *EventR
 
 func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository, opts ...RepositoryOption) TypedRepository[T] {
 	options := newRepoOpts(opts...)
+
+	metrics := options.metrics
+	if metrics == nil {
+		metrics = NopESMetrics()
+	}
+
+	// Determine aggregate type from a zero-value instance
+	var zero T
+	aggType := zero.GetAggType()
+
 	return &typedRepo[T]{
 		r:               r,
 		log:             log.With(slog.String("repo", fmt.Sprintf("%T", *new(T)))),
@@ -406,5 +439,7 @@ func NewTypedRepositoryFrom[T Aggregate](log *slog.Logger, r Repository, opts ..
 		defaultLoadOpts: options.loadOpts,
 		defaultSaveOpts: options.saveOpts,
 		pkTrans:         perkey.New[string](),
+		metrics:         metrics,
+		aggType:         aggType,
 	}
 }

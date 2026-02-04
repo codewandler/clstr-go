@@ -220,6 +220,7 @@ es.WithRepoCacheLRU(1000)         // LRU cache with size
 es.WithIDGenerator(gen)           // Custom event ID generation
 es.WithLoadOpts(...)              // Default load options
 es.WithSaveOpts(...)              // Default save options
+es.WithMetrics(metrics)           // Prometheus/custom metrics
 ```
 
 ### TypedRepository
@@ -530,6 +531,49 @@ repo := env.Repository()
 store := env.Store()
 consumer := env.NewConsumer(handler)
 ```
+
+## Metrics
+
+The ES package supports pluggable metrics via the `ESMetrics` interface:
+
+```go
+import promadapter "github.com/codewandler/clstr-go/adapters/prometheus"
+
+// Create Prometheus metrics
+metrics := promadapter.NewESMetrics(prometheus.DefaultRegisterer)
+
+// Use with environment
+env := es.NewEnv(
+    es.WithMetrics(metrics),
+    // ... other options
+)
+
+// Or with repository directly
+repo := es.NewRepository(log, store, registry, es.WithMetrics(metrics))
+
+// Or with consumer
+consumer := es.NewConsumer(store, registry, handler, es.WithMetrics(metrics))
+```
+
+**Available Metrics:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `clstr_es_store_load_duration_seconds` | Histogram | `aggregate_type` | Event store load latency |
+| `clstr_es_store_append_duration_seconds` | Histogram | `aggregate_type` | Event store append latency |
+| `clstr_es_events_appended_total` | Counter | `aggregate_type` | Events appended count |
+| `clstr_es_repo_load_duration_seconds` | Histogram | `aggregate_type` | Repository load latency |
+| `clstr_es_repo_save_duration_seconds` | Histogram | `aggregate_type` | Repository save latency |
+| `clstr_es_concurrency_conflicts_total` | Counter | `aggregate_type` | Optimistic lock failures |
+| `clstr_es_cache_hits_total` | Counter | `aggregate_type` | Cache hits |
+| `clstr_es_cache_misses_total` | Counter | `aggregate_type` | Cache misses |
+| `clstr_es_snapshot_load_duration_seconds` | Histogram | `aggregate_type` | Snapshot load latency |
+| `clstr_es_snapshot_save_duration_seconds` | Histogram | `aggregate_type` | Snapshot save latency |
+| `clstr_es_consumer_event_duration_seconds` | Histogram | `event_type`, `live` | Event processing time |
+| `clstr_es_consumer_events_total` | Counter | `event_type`, `live`, `success` | Events processed |
+| `clstr_es_consumer_lag` | Gauge | `consumer` | Consumer lag (sequences behind) |
+
+If no metrics are provided, a no-op implementation is used (zero overhead).
 
 ## Error Types
 

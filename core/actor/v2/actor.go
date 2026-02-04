@@ -49,6 +49,8 @@ type Options struct {
 	// MaxConcurrentTasks caps the number of tasks run via HandlerCtx.Schedule.
 	// If 0 or negative, scheduling is unlimited.
 	MaxConcurrentTasks int
+	// Metrics for actor instrumentation. If nil, a no-op implementation is used.
+	Metrics ActorMetrics
 }
 
 // actorIDKey is used to detect self-requests via context.
@@ -73,6 +75,7 @@ type BaseActor struct {
 	closed bool
 
 	onPanic OnPanic
+	metrics ActorMetrics
 }
 
 func New(opt Options, handler RawHandler) Actor {
@@ -96,6 +99,9 @@ func New(opt Options, handler RawHandler) Actor {
 			opt.Logger.Error("actor panicked", slog.Any("recovered", recovered), slog.Any("stack", stack), slog.Any("msg", msg))
 		}
 	}
+	if opt.Metrics == nil {
+		opt.Metrics = NopActorMetrics()
+	}
 
 	log := opt.Logger
 	if log == nil {
@@ -108,6 +114,7 @@ func New(opt Options, handler RawHandler) Actor {
 	}
 
 	actorID := gonanoid.Must()
+	actorMetrics := opt.Metrics
 
 	a := &BaseActor{
 		id:      actorID,
@@ -118,6 +125,7 @@ func New(opt Options, handler RawHandler) Actor {
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 		onPanic: opt.OnPanic,
+		metrics: actorMetrics,
 	}
 
 	// Set up scheduler used by handler context
@@ -139,7 +147,7 @@ func New(opt Options, handler RawHandler) Actor {
 		},
 		log:     log,
 		Context: ctx,
-		sched:   NewScheduler(opt.MaxConcurrentTasks, ctx),
+		sched:   NewSchedulerWithMetrics(opt.MaxConcurrentTasks, ctx, actorID, actorMetrics),
 		actorID: actorID,
 	}
 
@@ -249,17 +257,24 @@ func (a *BaseActor) loop(hc *handlerCtx, h RawHandler) {
 	// This prevents deadlocks when a handler tries to Request() back to the same actor.
 	handlerScopedCtx := hc.withHandlerScope()
 
-	// helper: call handler with crash containment
-	safeHandle := func(msg Envelope) (any, error) {
+	// helper: call handler with crash containment and metrics
+	safeHandle := func(msg Envelope) (res any, err error) {
+		// instrument message duration
+		defer a.metrics.MessageDuration(msg.Type).ObserveDuration()
+
 		defer func() {
 			if r := recover(); r != nil {
+				a.metrics.MessagePanic(msg.Type)
 				if a.onPanic != nil {
 					a.onPanic(r, debug.Stack(), msg)
 				}
 				// containment: keep running
 			}
 		}()
-		return h.HandleMessage(handlerScopedCtx, msg.Type, msg.Data)
+
+		res, err = h.HandleMessage(handlerScopedCtx, msg.Type, msg.Data)
+		a.metrics.MessageProcessed(msg.Type, err == nil)
+		return res, err
 	}
 
 	// helper: drain all pending control msgs (priority)
@@ -379,6 +394,8 @@ func (a *BaseActor) loop(hc *handlerCtx, h RawHandler) {
 				Error:  err,
 			}
 			handled = true
+			// report mailbox depth after processing
+			a.metrics.MailboxDepth(a.id, len(a.mailbox))
 		}
 
 		// Auto-renew permit in continuous mode after successfully handling one message.

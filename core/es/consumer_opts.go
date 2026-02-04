@@ -15,6 +15,7 @@ type (
 		log             *slog.Logger
 		name            string
 		shutdownTimeout time.Duration
+		metrics         ESMetrics
 	}
 
 	ConsumerOption interface {

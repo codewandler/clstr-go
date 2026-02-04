@@ -16,14 +16,16 @@ type (
 		Transport ServerTransport
 		Shards    []uint32
 		Handler   ServerHandlerFunc
+		Metrics   ClusterMetrics
 	}
 
 	Node struct {
-		log    *slog.Logger
-		nodeID string
-		t      ServerTransport
-		h      ServerHandlerFunc
-		shards []uint32
+		log     *slog.Logger
+		nodeID  string
+		t       ServerTransport
+		h       ServerHandlerFunc
+		shards  []uint32
+		metrics ClusterMetrics
 	}
 )
 
@@ -45,12 +47,18 @@ func NewNode(opts NodeOptions) *Node {
 		}
 	}
 
+	metrics := opts.Metrics
+	if metrics == nil {
+		metrics = NopClusterMetrics()
+	}
+
 	return &Node{
-		log:    log,
-		nodeID: nodeID,
-		t:      opts.Transport,
-		shards: opts.Shards,
-		h:      hdl,
+		log:     log,
+		nodeID:  nodeID,
+		t:       opts.Transport,
+		shards:  opts.Shards,
+		h:       hdl,
+		metrics: metrics,
 	}
 }
 
@@ -75,8 +83,12 @@ func (n *Node) handleMsg(ctx context.Context, env Envelope) (data []byte, err er
 		})
 	}
 
+	// instrument handler execution
+	defer n.metrics.HandlerDuration(env.Type).ObserveDuration()
+
 	// use handler
 	data, err = n.h(ctx, env)
+	n.metrics.HandlerCompleted(env.Type, err == nil)
 	if err != nil {
 		n.log.Error(
 			"failed to handle message",
@@ -100,5 +112,9 @@ func (n *Node) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to subscribe to shard %d: %w", s, err)
 		}
 	}
+
+	// report shards owned
+	n.metrics.ShardsOwned(n.nodeID, len(n.shards))
+
 	return nil
 }

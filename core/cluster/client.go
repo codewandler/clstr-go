@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -11,6 +12,7 @@ type ClientOptions struct {
 	NumShards       uint32
 	Seed            string
 	EnvelopeOptions []EnvelopeOption
+	Metrics         ClusterMetrics
 }
 
 type Client struct {
@@ -18,6 +20,7 @@ type Client struct {
 	numShards uint32
 	seed      string
 	opts      []EnvelopeOption
+	metrics   ClusterMetrics
 }
 
 func NewClient(opts ClientOptions) (*Client, error) {
@@ -27,10 +30,15 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if opts.NumShards == 0 {
 		return nil, fmt.Errorf("cluster: ClientOptions.NumShards is required")
 	}
+	metrics := opts.Metrics
+	if metrics == nil {
+		metrics = NopClusterMetrics()
+	}
 	return &Client{
 		t:         opts.Transport,
 		numShards: opts.NumShards,
 		seed:      opts.Seed,
+		metrics:   metrics,
 	}, nil
 }
 
@@ -57,6 +65,23 @@ func (c *Client) newEnv(shard uint32, msgType string, data []byte, opts ...Envel
 	return e, nil
 }
 
+// recordTransportError maps known transport errors to metric labels.
+func (c *Client) recordTransportError(err error) {
+	if err == nil {
+		return
+	}
+	switch {
+	case errors.Is(err, ErrTransportNoShardSubscriber):
+		c.metrics.TransportError("no_subscriber")
+	case errors.Is(err, ErrHandlerTimeout):
+		c.metrics.TransportError("timeout")
+	case errors.Is(err, ErrEnvelopeExpired):
+		c.metrics.TransportError("ttl_expired")
+	case errors.Is(err, ErrTransportClosed):
+		c.metrics.TransportError("closed")
+	}
+}
+
 // NotifyShard publishes directly to a shard (caller already knows shard).
 func (c *Client) NotifyShard(ctx context.Context, shard uint32, msgType string, data []byte, opts ...EnvelopeOption) error {
 	if shard >= c.numShards {
@@ -67,6 +92,10 @@ func (c *Client) NotifyShard(ctx context.Context, shard uint32, msgType string, 
 		return err
 	}
 	_, err = c.t.Request(ctx, env)
+	c.metrics.NotifyCompleted(msgType, err == nil)
+	if err != nil {
+		c.recordTransportError(err)
+	}
 	return err
 }
 
@@ -79,7 +108,16 @@ func (c *Client) RequestShard(ctx context.Context, shard uint32, msgType string,
 	if err != nil {
 		return nil, err
 	}
-	return c.t.Request(ctx, env)
+
+	// instrument
+	defer c.metrics.RequestDuration(msgType).ObserveDuration()
+
+	result, err := c.t.Request(ctx, env)
+	c.metrics.RequestCompleted(msgType, err == nil)
+	if err != nil {
+		c.recordTransportError(err)
+	}
+	return result, err
 }
 
 // NotifyKey publishes using a string key -> shard mapping (e.g. tenantID, userID, deviceID).

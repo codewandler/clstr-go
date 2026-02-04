@@ -119,6 +119,7 @@ type NodeOptions struct {
     Transport ServerTransport   // Required
     Shards    []uint32          // Required: owned shard IDs
     Handler   ServerHandlerFunc // Required
+    Metrics   ClusterMetrics    // Optional: for instrumentation
 }
 
 node := cluster.NewNode(opts)
@@ -137,6 +138,7 @@ type ClientOptions struct {
     NumShards       uint32           // Required
     Seed            string           // Optional: for deterministic hashing
     EnvelopeOptions []EnvelopeOption // Optional: apply to all requests
+    Metrics         ClusterMetrics   // Optional: for instrumentation
 }
 
 client, _ := cluster.NewClient(opts)
@@ -386,6 +388,47 @@ func main() {
 }
 ```
 
+## Metrics
+
+The cluster package supports pluggable metrics via the `ClusterMetrics` interface:
+
+```go
+import promadapter "github.com/codewandler/clstr-go/adapters/prometheus"
+
+// Create Prometheus metrics
+metrics := promadapter.NewClusterMetrics(prometheus.DefaultRegisterer)
+
+// Use with client
+client, _ := cluster.NewClient(cluster.ClientOptions{
+    Transport: tr,
+    NumShards: 256,
+    Metrics:   metrics,
+})
+
+// Use with node
+node := cluster.NewNode(cluster.NodeOptions{
+    Transport: tr,
+    Shards:    shards,
+    Handler:   handler,
+    Metrics:   metrics,
+})
+```
+
+**Available Metrics:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `clstr_cluster_request_duration_seconds` | Histogram | `message_type` | Client request latency |
+| `clstr_cluster_requests_total` | Counter | `message_type`, `success` | Client requests |
+| `clstr_cluster_notifies_total` | Counter | `message_type`, `success` | Client notifications |
+| `clstr_cluster_transport_errors_total` | Counter | `error_type` | Transport errors (no_subscriber, timeout, ttl_expired, closed) |
+| `clstr_cluster_handler_duration_seconds` | Histogram | `message_type` | Handler execution time |
+| `clstr_cluster_handlers_total` | Counter | `message_type`, `success` | Handlers executed |
+| `clstr_cluster_handlers_active` | Gauge | `node_id` | Concurrent handlers |
+| `clstr_cluster_shards_owned` | Gauge | `node_id` | Shards owned by node |
+
+If no metrics are provided, a no-op implementation is used (zero overhead).
+
 ## Key Types Reference
 
 | Type | Description |
@@ -399,3 +442,4 @@ func main() {
 | `ScopedClient` | Pre-scoped client for key or shard |
 | `Request[IN, OUT]` | Typed request/response helper |
 | `ServerHandlerFunc` | Handler callback signature |
+| `ClusterMetrics` | Metrics interface for instrumentation |

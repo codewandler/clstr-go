@@ -15,6 +15,7 @@ type (
 		events      []EventRegisterOption
 		aggregates  []Aggregate
 		consumers   []EnvConsumerOption
+		metrics     ESMetrics
 	}
 
 	EnvOption interface {

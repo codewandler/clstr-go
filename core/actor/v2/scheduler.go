@@ -23,6 +23,10 @@ type scheduler struct {
 	max      int
 
 	wg sync.WaitGroup
+
+	// metrics support
+	actorID string
+	metrics ActorMetrics
 }
 
 func (s *scheduler) Schedule(f scheduleFunc) {
@@ -39,9 +43,13 @@ func (s *scheduler) Schedule(f scheduleFunc) {
 	if s.max <= 0 {
 		go func() {
 			defer s.wg.Done()
-			s.inflight.Add(1)
-			defer s.inflight.Add(-1)
-			f()
+			count := s.inflight.Add(1)
+			s.metrics.SchedulerInflight(s.actorID, int(count))
+			defer func() {
+				count := s.inflight.Add(-1)
+				s.metrics.SchedulerInflight(s.actorID, int(count))
+			}()
+			s.runTask(f)
 		}()
 		return
 	}
@@ -57,14 +65,32 @@ func (s *scheduler) Schedule(f scheduleFunc) {
 		case s.sem <- struct{}{}:
 		}
 
-		s.inflight.Add(1)
+		count := s.inflight.Add(1)
+		s.metrics.SchedulerInflight(s.actorID, int(count))
 		defer func() {
 			<-s.sem
-			s.inflight.Add(-1)
+			count := s.inflight.Add(-1)
+			s.metrics.SchedulerInflight(s.actorID, int(count))
 		}()
 
-		f()
+		s.runTask(f)
 	}()
+}
+
+func (s *scheduler) runTask(f scheduleFunc) {
+	defer s.metrics.SchedulerTaskDuration().ObserveDuration()
+
+	defer func() {
+		if r := recover(); r != nil {
+			s.metrics.SchedulerTaskCompleted(false)
+			// log the panic but don't re-panic
+			s.log.Error("scheduled task panicked", slog.Any("recovered", r))
+			return
+		}
+	}()
+
+	f()
+	s.metrics.SchedulerTaskCompleted(true)
 }
 
 // Wait blocks until all in-flight tasks complete.
@@ -76,9 +102,24 @@ func (s *scheduler) Wait() {
 // concurrently running tasks to max. If max <= 0, concurrency is unlimited.
 // The scheduler respects context cancellation for graceful shutdown.
 func NewScheduler(max int, ctx context.Context) Scheduler {
+	return NewSchedulerWithMetrics(max, ctx, "", NopActorMetrics())
+}
+
+// NewSchedulerWithMetrics creates a scheduler with metrics support.
+func NewSchedulerWithMetrics(max int, ctx context.Context, actorID string, metrics ActorMetrics) Scheduler {
 	var sem chan struct{}
 	if max > 0 {
 		sem = make(chan struct{}, max)
 	}
-	return &scheduler{ctx: ctx, sem: sem, max: max, log: slog.Default()}
+	if metrics == nil {
+		metrics = NopActorMetrics()
+	}
+	return &scheduler{
+		ctx:     ctx,
+		sem:     sem,
+		max:     max,
+		log:     slog.Default(),
+		actorID: actorID,
+		metrics: metrics,
+	}
 }

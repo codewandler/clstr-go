@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **[core/es/README.md](./core/es/README.md)** — Event Sourcing package documentation
 - **[core/actor/README.md](./core/actor/README.md)** — Actor Model package documentation
 - **[core/cluster/README.md](./core/cluster/README.md)** — Cluster package documentation
+- **[adapters/prometheus/README.md](./adapters/prometheus/README.md)** — Prometheus metrics adapter
 
 ## Build/Test Commands
 
@@ -38,10 +39,12 @@ This is a distributed **event sourcing framework** for Go with NATS JetStream as
 - **`sf/`** - Single-flight pattern
 - **`ds/`** - Generic data structures (ordered Set)
 - **`reflector/`** - Type reflection utilities for event/message type naming
+- **`metrics/`** - Pluggable metrics interfaces (Counter, Gauge, Histogram, Timer) with no-op defaults
 
 ### Adapters (`adapters/`)
 
 - **`nats/`** - NATS JetStream: EventStore, KV store (snapshots/checkpoints), connection management, cluster transport
+- **`prometheus/`** - Prometheus metrics: implementations of ESMetrics, ActorMetrics, ClusterMetrics for all three pillars
 
 ### Ports (`ports/`)
 

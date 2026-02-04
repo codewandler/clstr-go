@@ -23,6 +23,7 @@ type (
 		saveOpts    []SaveOption
 		loadOpts    []LoadOption
 		idGenerator IDGenerator
+		metrics     ESMetrics
 	}
 
 	repoSaveOptions struct {

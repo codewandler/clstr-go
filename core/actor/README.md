@@ -205,6 +205,9 @@ type Options struct {
 
     // MaxConcurrentTasks caps concurrent Schedule() tasks (default: 32)
     MaxConcurrentTasks int
+
+    // Metrics for actor instrumentation (default: no-op)
+    Metrics ActorMetrics
 }
 ```
 
@@ -456,6 +459,39 @@ func TestStepMode(t *testing.T) {
 }
 ```
 
+## Metrics
+
+The actor package supports pluggable metrics via the `ActorMetrics` interface:
+
+```go
+import promadapter "github.com/codewandler/clstr-go/adapters/prometheus"
+
+// Create Prometheus metrics
+metrics := promadapter.NewActorMetrics(prometheus.DefaultRegisterer)
+
+// Use with actor
+a := actor.TypedHandlers(
+    // ... handlers
+).ToActor(actor.Options{
+    Context: ctx,
+    Metrics: metrics,
+})
+```
+
+**Available Metrics:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `clstr_actor_message_duration_seconds` | Histogram | `message_type` | Message handling time |
+| `clstr_actor_messages_total` | Counter | `message_type`, `success` | Messages processed |
+| `clstr_actor_panics_total` | Counter | `message_type` | Handler panics |
+| `clstr_actor_mailbox_depth` | Gauge | `actor_id` | Current mailbox queue depth |
+| `clstr_actor_scheduler_inflight` | Gauge | `actor_id` | Concurrent scheduled tasks |
+| `clstr_actor_scheduler_task_duration_seconds` | Histogram | - | Scheduled task duration |
+| `clstr_actor_scheduler_tasks_total` | Counter | `success` | Scheduled tasks completed |
+
+If no metrics are provided, a no-op implementation is used (zero overhead).
+
 ## Key Types Reference
 
 | Type | Description |
@@ -467,3 +503,4 @@ func TestStepMode(t *testing.T) {
 | `Scheduler` | Bounded concurrency for background tasks |
 | `State[T]` | Thread-safe state container with read/write operations |
 | `Options` | Configuration for actor creation |
+| `ActorMetrics` | Metrics interface for instrumentation |
