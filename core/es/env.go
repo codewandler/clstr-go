@@ -11,7 +11,6 @@ import (
 
 type Env struct {
 	ctx          context.Context
-	id           string
 	done         chan struct{}
 	shutdownOnce sync.Once
 	cancelCtx    context.CancelFunc

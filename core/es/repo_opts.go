@@ -148,7 +148,7 @@ func newLoadOptions(opts ...LoadOption) repoLoadOptions {
 
 func (o SnapshotOption) applyToLoadAndSaveOptions(options *repoLoadAndSaveOpts) {
 	options.loadOpts = append(options.loadOpts, o)
-	options.saveOpts = append(options.saveOpts)
+	options.saveOpts = append(options.saveOpts, o)
 }
 
 func (o RepoUseCacheOption) applyToLoadAndSaveOptions(options *repoLoadAndSaveOpts) {

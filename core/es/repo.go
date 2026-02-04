@@ -95,9 +95,8 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 
 	var (
 		curVersion = agg.GetVersion()
-		curSeq     = agg.GetSeq()
 		minVersion = curVersion + 1
-		minSeq     = curSeq + 1
+		minSeq     = agg.GetSeq() + 1
 	)
 
 	// load all events
@@ -132,7 +131,6 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		agg.setVersion(e.Version)
 		agg.setSeq(e.Seq)
 		curVersion = e.Version
-		curSeq = e.Seq
 	}
 
 	if curVersion == 0 {

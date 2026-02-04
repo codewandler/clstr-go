@@ -26,6 +26,7 @@ type writeTask[T any] struct {
 	done chan struct{}
 }
 
+//lint:ignore U1000 implements StateTask[T] interface, called via State.run()
 func (t writeTask[T]) run(st *T, cb func(*T)) {
 	for _, op := range t.ops {
 		op(st)
@@ -42,6 +43,7 @@ type readTask[T any] struct {
 	runFunc func(*T)
 }
 
+//lint:ignore U1000 implements StateTask[T] interface, called via State.run()
 func (t readTask[T]) run(st *T, _ func(*T)) { t.runFunc(st) }
 
 func NewState[T any](ctx context.Context, data *T, cb func(*T)) *State[T] {

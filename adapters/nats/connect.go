@@ -10,8 +10,6 @@ import (
 	natsgo "github.com/nats-io/nats.go"
 )
 
-type closeFunc = func()
-
 type Connector func() (nc *natsgo.Conn, err error)
 
 var natsLog = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{

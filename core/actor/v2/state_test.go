@@ -44,5 +44,4 @@ func TestState_JSON(t *testing.T) {
 	s.Process(func(d *Data) {
 		require.Equal(t, 23, d.Value)
 	})
-
 }

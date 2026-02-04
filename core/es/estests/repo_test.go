@@ -42,10 +42,10 @@ func TestRepository_Typed(t *testing.T) {
 	require.Equal(t, "test_agg", repo.GetAggType())
 
 	// load fails
-	a, err := repo.GetByID(t.Context(), aggID)
+	_, err := repo.GetByID(t.Context(), aggID)
 	require.ErrorIs(t, err, es.ErrAggregateNotFound)
 
-	a, err = repo.Create(t.Context(), aggID)
+	a, err := repo.Create(t.Context(), aggID)
 	require.NoError(t, err)
 	require.NotNil(t, a)
 	require.Equal(t, aggID, a.GetID())

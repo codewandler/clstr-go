@@ -18,6 +18,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
       - name: Run tests
         run: go test -v -count=1 -race -failfast ./...
 

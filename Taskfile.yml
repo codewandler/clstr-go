@@ -12,6 +12,28 @@ tasks:
     cmds:
       - goimports -v -w -local "$(go list -m)" .
 
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run staticcheck
+    cmds:
+      - staticcheck ./...
+
+  vuln:
+    desc: Run govulncheck for known vulnerabilities
+    cmds:
+      - govulncheck ./...
+
+  check:
+    desc: Run all static analysis (vet, lint, vuln)
+    cmds:
+      - task: vet
+      - task: lint
+      - task: vuln
+
   loadtest:
     env:
       N: 20000  # total operations
@@ -24,3 +46,4 @@ tasks:
     cmds:
       - task: test
       - task: fix
+      - task: check

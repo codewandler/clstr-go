@@ -202,7 +202,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		}
 	}
 
-	if filterSubjects == nil || len(filterSubjects) == 0 {
+	if len(filterSubjects) == 0 {
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
@@ -449,7 +449,7 @@ func (e *EventStore) Append(
 	events []es.Envelope,
 ) (res *es.StoreAppendResult, err error) {
 
-	if events == nil || len(events) == 0 {
+	if len(events) == 0 {
 		return nil, fmt.Errorf("no events to append")
 	}
 	if aggType == "" {

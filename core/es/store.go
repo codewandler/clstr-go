@@ -84,7 +84,7 @@ func AppendEvents(
 	expect Version,
 	events ...any,
 ) (*StoreAppendResult, error) {
-	if events == nil || len(events) == 0 {
+	if len(events) == 0 {
 		return nil, ErrStoreNoEvents
 	}
 	envelopes := make([]Envelope, 0)

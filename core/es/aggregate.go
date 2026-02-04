@@ -111,7 +111,7 @@ func (b *BaseAggregate) Apply(evt any) error {
 	return fmt.Errorf("unknown base aggregate event: %T", evt)
 }
 
-func (b *BaseAggregate) IsCreated() bool         { return b.CreatedAt.IsZero() == false }
+func (b *BaseAggregate) IsCreated() bool         { return !b.CreatedAt.IsZero() }
 func (b *BaseAggregate) GetCreatedAt() time.Time { return b.CreatedAt }
 
 func (b *BaseAggregate) Create(id string) error {
@@ -130,6 +130,15 @@ func (b *BaseAggregate) GetVersion() Version  { return b.version }
 func (b *BaseAggregate) setVersion(v Version) { b.version = v }
 func (b *BaseAggregate) GetSeq() uint64       { return b.seq }
 func (b *BaseAggregate) setSeq(s uint64)      { b.seq = s }
+
+// aggregateVersioner is the internal interface for version/seq management.
+// BaseAggregate implements this to satisfy the Aggregate interface requirements.
+type aggregateVersioner interface {
+	setVersion(Version)
+	setSeq(uint64)
+}
+
+var _ aggregateVersioner = (*BaseAggregate)(nil)
 
 // Raise records an event as uncommitted.
 // (Typically you call Raise+Apply together via a helper like ApplyNew below.)
