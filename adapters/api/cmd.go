@@ -3,7 +3,7 @@ package api
 import (
 	"fmt"
 
-	"github.com/codewandler/clstr-go/internal/reflector"
+	"github.com/codewandler/clstr-go/core/reflector"
 )
 
 type ExecuteCommandRequestBody[PAYLOAD any] struct {

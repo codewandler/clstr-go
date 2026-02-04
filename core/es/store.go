@@ -8,7 +8,7 @@ import (
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
-	"github.com/codewandler/clstr-go/internal/reflector"
+	"github.com/codewandler/clstr-go/core/reflector"
 )
 
 var (

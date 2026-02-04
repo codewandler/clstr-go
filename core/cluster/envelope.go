@@ -1,6 +1,6 @@
 package cluster
 
-import "github.com/codewandler/clstr-go/internal/reflector"
+import "github.com/codewandler/clstr-go/core/reflector"
 
 const (
 	envHeaderKey = "x-clstr-key"

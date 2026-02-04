@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/codewandler/clstr-go/internal/reflector"
+	"github.com/codewandler/clstr-go/core/reflector"
 )
 
 type (

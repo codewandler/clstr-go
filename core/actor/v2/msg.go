@@ -1,6 +1,6 @@
 package actor
 
-import "github.com/codewandler/clstr-go/internal/reflector"
+import "github.com/codewandler/clstr-go/core/reflector"
 
 type msgTyper interface{ MsgType() string }
 

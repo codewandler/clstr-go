@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/codewandler/clstr-go/internal/reflector"
+	"github.com/codewandler/clstr-go/core/reflector"
 )
 
 // EventRegistry maps event type names to constructors so we can decode persisted events.
