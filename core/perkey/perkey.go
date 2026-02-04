@@ -6,22 +6,39 @@
 package perkey
 
 import (
+	"context"
 	"sync"
 )
+
+// Option configures a Scheduler.
+type Option func(*config)
+
+type config struct {
+	bufferSize int
+}
+
+// WithBufferSize sets the task buffer size per worker (default: 64).
+func WithBufferSize(size int) Option {
+	return func(c *config) {
+		if size > 0 {
+			c.bufferSize = size
+		}
+	}
+}
 
 // Scheduler runs tasks (functions) such that for any given key K,
 // tasks are executed sequentially, in submission order.
 // Tasks for *different* keys can proceed in parallel.
 type Scheduler[K comparable] struct {
-	mu      sync.Mutex
-	workers map[K]*worker[K]
-	closed  bool
+	mu         sync.Mutex
+	workers    map[K]*worker
+	closed     bool
+	wg         sync.WaitGroup // tracks in-flight Do operations
+	bufferSize int
 }
 
-type worker[K comparable] struct {
-	key   K
+type worker struct {
 	tasks chan *task
-	once  sync.Once
 }
 
 type task struct {
@@ -30,9 +47,14 @@ type task struct {
 }
 
 // New creates a new Scheduler.
-func New[K comparable]() *Scheduler[K] {
+func New[K comparable](opts ...Option) *Scheduler[K] {
+	cfg := &config{bufferSize: 64}
+	for _, opt := range opts {
+		opt(cfg)
+	}
 	return &Scheduler[K]{
-		workers: make(map[K]*worker[K]),
+		workers:    make(map[K]*worker),
+		bufferSize: cfg.bufferSize,
 	}
 }
 
@@ -40,25 +62,57 @@ func New[K comparable]() *Scheduler[K] {
 // It blocks until fn finishes and returns its error.
 // All fn calls for the same key are executed sequentially.
 func (s *Scheduler[K]) Do(key K, fn func() error) error {
+	return s.DoContext(context.Background(), key, fn)
+}
+
+// DoContext is like Do but respects context cancellation.
+// If the context is cancelled while waiting to enqueue or waiting for
+// completion, it returns the context error. Note that if a task is already
+// enqueued, it will still execute even if the caller's context is cancelled.
+func (s *Scheduler[K]) DoContext(ctx context.Context, key K, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrSchedulerClosed
+	}
+	s.wg.Add(1)
+	w := s.getOrCreateWorkerLocked(key)
+	s.mu.Unlock()
+
 	t := &task{
 		fn:   fn,
 		done: make(chan error, 1),
 	}
 
-	w, err := s.getOrCreateWorker(key)
-	if err != nil {
-		return err
+	// Enqueue task or respect context cancellation.
+	select {
+	case w.tasks <- t:
+		// Task enqueued successfully.
+	case <-ctx.Done():
+		s.wg.Done()
+		return ctx.Err()
 	}
 
-	// Enqueue task for this key.
-	w.tasks <- t
-
-	// Wait for completion.
-	return <-t.done
+	// Wait for completion or context cancellation.
+	select {
+	case err := <-t.done:
+		s.wg.Done()
+		return err
+	case <-ctx.Done():
+		// Task is already in the queue and will execute,
+		// but we don't wait for it.
+		s.wg.Done()
+		return ctx.Err()
+	}
 }
 
 // Close stops accepting new tasks and shuts down all workers.
-// Existing tasks already in the queues will still be processed.
+// It waits for in-flight Do operations to finish enqueueing before
+// closing worker channels. Existing tasks in queues will still be processed.
 func (s *Scheduler[K]) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -66,44 +120,40 @@ func (s *Scheduler[K]) Close() {
 		return
 	}
 	s.closed = true
+	s.mu.Unlock()
 
-	// Close all worker channels to let them exit.
+	// Wait for all in-flight Do operations to finish enqueueing.
+	// This prevents sends to closed channels.
+	s.wg.Wait()
+
+	// Now safe to close all worker channels.
+	s.mu.Lock()
 	for _, w := range s.workers {
 		close(w.tasks)
 	}
+	s.workers = nil
 	s.mu.Unlock()
 }
 
-func (s *Scheduler[K]) getOrCreateWorker(key K) (*worker[K], error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return nil, ErrSchedulerClosed
-	}
-
+func (s *Scheduler[K]) getOrCreateWorkerLocked(key K) *worker {
 	w, ok := s.workers[key]
 	if ok {
-		return w, nil
+		return w
 	}
 
-	w = &worker[K]{
-		key:   key,
-		tasks: make(chan *task, 64), // small buffer; adjust if needed
+	w = &worker{
+		tasks: make(chan *task, s.bufferSize),
 	}
 	s.workers[key] = w
-	go w.run()
+	go runWorker(w)
 
-	return w, nil
+	return w
 }
 
-// run processes tasks sequentially for a single key.
-func (w *worker[K]) run() {
+// runWorker processes tasks sequentially for a single key.
+func runWorker(w *worker) {
 	for t := range w.tasks {
-		// Execute the task.
-		err := t.fn()
-		// Signal completion.
-		t.done <- err
+		t.done <- t.fn()
 	}
 }
 
