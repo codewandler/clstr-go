@@ -110,3 +110,66 @@ func TestContains_Any(t *testing.T) {
 	s1 := NewSet("t1", "t2", "t3")
 	require.True(t, s1.ContainsAny(NewSet("t2", "t4")))
 }
+
+func TestSet_IsSubsetOf(t *testing.T) {
+	empty := NewStringSet()
+	small := NewStringSet("a", "b")
+	large := NewStringSet("a", "b", "c", "d")
+	disjoint := NewStringSet("x", "y")
+
+	// Empty set is subset of everything
+	require.True(t, empty.IsSubsetOf(empty))
+	require.True(t, empty.IsSubsetOf(small))
+	require.True(t, empty.IsSubsetOf(large))
+
+	// Proper subsets
+	require.True(t, small.IsSubsetOf(large))
+	require.False(t, large.IsSubsetOf(small))
+
+	// Equal sets are subsets of each other
+	require.True(t, small.IsSubsetOf(NewStringSet("a", "b")))
+
+	// Disjoint sets
+	require.False(t, small.IsSubsetOf(disjoint))
+}
+
+func TestSet_IsSupersetOf(t *testing.T) {
+	empty := NewStringSet()
+	small := NewStringSet("a", "b")
+	large := NewStringSet("a", "b", "c", "d")
+
+	// Everything is superset of empty
+	require.True(t, empty.IsSupersetOf(empty))
+	require.True(t, small.IsSupersetOf(empty))
+	require.True(t, large.IsSupersetOf(empty))
+
+	// Proper supersets
+	require.True(t, large.IsSupersetOf(small))
+	require.False(t, small.IsSupersetOf(large))
+
+	// Equal sets are supersets of each other
+	require.True(t, small.IsSupersetOf(NewStringSet("a", "b")))
+}
+
+func TestSet_ForEach(t *testing.T) {
+	s := NewStringSet("a", "b", "c")
+
+	var collected []string
+	s.ForEach(func(v string) {
+		collected = append(collected, v)
+	})
+
+	// Should preserve insertion order
+	require.Equal(t, []string{"a", "b", "c"}, collected)
+}
+
+func TestSet_ForEach_Empty(t *testing.T) {
+	s := NewStringSet()
+
+	called := false
+	s.ForEach(func(v string) {
+		called = true
+	})
+
+	require.False(t, called)
+}
