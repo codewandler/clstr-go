@@ -179,6 +179,19 @@ client, _ := cluster.NewClient(cluster.ClientOptions{Metrics: metrics.Cluster, .
 
 See the [Prometheus adapter](./adapters/prometheus/) for detailed documentation.
 
+## Performance
+
+Benchmark results from the [counter example](./examples/) (7-node cluster, NATS in Docker):
+
+| Metric | Value |
+|--------|-------|
+| Throughput | **43,000 req/sec** |
+| p99 latency | 20ms |
+| Actor handler | ~8μs per message |
+| Memory | ~12MB heap after 500k requests |
+
+Every request is correctly routed, processed exactly once, and the counter value always matches the request count.
+
 ## Quick Start
 
 ```bash

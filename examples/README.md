@@ -1,8 +1,95 @@
 # Examples
 
-Working examples demonstrating clstr's three pillars in action.
+Working examples demonstrating clstr's pillars in action.
 
-## cluster-demo
+## counter (Cluster + Actor)
+
+A simple distributed counter that demonstrates the Cluster and Actor pillars without Event Sourcing. Designed for interactive exploration.
+
+### What it demonstrates
+
+1. **Cluster routing**
+   - Requests routed by counter ID using consistent hashing
+   - Multi-node cluster with shard distribution (configurable)
+   - NATS transport for inter-node communication
+
+2. **Actor-based message handling**
+   - One actor per counter ID
+   - In-memory state (counter value)
+   - Type-safe request/response handlers
+
+3. **Prometheus metrics**
+   - Metrics exposed on port 2121
+   - Actor and Cluster metrics enabled
+
+4. **HTTP API**
+   - Simple REST API on port 8181
+   - Easy to test with curl
+
+### Running
+
+```bash
+cd examples/counter
+go run .
+```
+
+### Usage
+
+Once running, interact with the counter:
+
+```bash
+# Increment a counter (default +1)
+curl -X POST localhost:8181/counter/my-counter/increment
+
+# Increment by a specific amount
+curl -X POST localhost:8181/counter/my-counter/increment -d '{"amount": 5}'
+
+# Get current value
+curl localhost:8181/counter/my-counter
+
+# View Prometheus metrics
+curl localhost:2121/metrics
+```
+
+### Sample output
+
+```
+level=INFO msg="prometheus metrics server starting" port=2121
+level=INFO msg="starting NATS container..."
+level=INFO msg="NATS ready" url=nats://172.17.0.2:4222
+level=INFO msg="starting node" nodeID=node-0 shardCount=10
+level=INFO msg="starting node" nodeID=node-1 shardCount=14
+...
+level=INFO msg="HTTP server starting" port=8181
+level=INFO msg="=== Counter Demo Ready ==="
+```
+
+### Performance
+
+Benchmark results on a local machine with NATS running in Docker (7 nodes, 64 shards):
+
+| Metric | Value |
+|--------|-------|
+| **Throughput** | ~43,000 req/sec |
+| **p50 latency** | 11ms |
+| **p99 latency** | 20ms |
+| **Actor handler time** | ~8μs per message |
+| **Memory** | ~12MB heap after 500k requests |
+
+```bash
+# Run your own benchmark
+hey -n 100000 -c 200 -m POST http://localhost:8181/counter/bench/increment
+
+# Verify correctness
+curl localhost:8181/counter/bench
+# {"counter_id":"bench","value":100000}
+```
+
+The counter value always matches the request count - no lost updates, no duplicates.
+
+---
+
+## accounting (All Three Pillars)
 
 A complete example showing all three pillars working together:
 
@@ -31,10 +118,10 @@ A complete example showing all three pillars working together:
 
 ```bash
 # From the repository root
-task loadtest
+task test
 
 # Or directly
-cd examples/cluster-demo
+cd examples/accounting
 go run .
 ```
 
@@ -69,7 +156,7 @@ level=INFO msg="get balance" node=node-0 account=charlie balance=300
 level=INFO msg="demo complete, shutting down..."
 ```
 
-Notice how each account is consistently routed to the same node (alice→node-1, bob→node-2, charlie→node-0) thanks to consistent hashing.
+Notice how each account is consistently routed to the same node (alice->node-1, bob->node-2, charlie->node-0) thanks to consistent hashing.
 
 ### Code structure
 

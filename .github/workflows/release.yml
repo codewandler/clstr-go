@@ -22,7 +22,7 @@ jobs:
         run: go test -v -count=1 -race -failfast ./...
 
       - name: Run demo
-        run: cd examples/cluster-demo && go run .
+        run: cd examples/accounting && go run .
 
   release:
     needs: test

@@ -1,4 +1,4 @@
-module github.com/codewandler/clstr-go/examples/cluster-demo
+module github.com/codewandler/clstr-go/examples/accounting
 
 go 1.25.1
 
