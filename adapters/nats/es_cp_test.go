@@ -20,13 +20,13 @@ func TestES_Checkpoint(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, cp)
 
-		lastSeq, err := cp.Get()
+		lastSeq, err := cp.Get(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, uint64(0), lastSeq)
 
-		require.NoError(t, cp.Set(123))
+		require.NoError(t, cp.Set(t.Context(), 123))
 
-		lastSeq, err = cp.Get()
+		lastSeq, err = cp.Get(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, uint64(123), lastSeq)
 	})
@@ -40,14 +40,14 @@ func TestES_Checkpoint(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, cp)
 
-		v, err := cp.Get("my_project", "blog-1234")
+		v, err := cp.Get(t.Context(), "my_project", "blog-1234")
 		require.NoError(t, err)
 		require.Equal(t, es.Version(0), v)
 
-		err = cp.Set("my_project", "blog-1234", 123)
+		err = cp.Set(t.Context(), "my_project", "blog-1234", 123)
 		require.NoError(t, err)
 
-		v, err = cp.Get("my_project", "blog-1234")
+		v, err = cp.Get(t.Context(), "my_project", "blog-1234")
 		require.NoError(t, err)
 		require.Equal(t, es.Version(123), v)
 	})

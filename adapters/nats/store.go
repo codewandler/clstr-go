@@ -20,6 +20,34 @@ const (
 	defaultSubjectPrefix = "clstr.es"
 )
 
+// RetentionPolicy defines how messages are retained in the stream.
+type RetentionPolicy int
+
+const (
+	// RetentionLimits keeps messages until limits (MaxMsgs, MaxBytes, MaxAge) are reached.
+	// This is the default NATS behavior - messages are kept until explicitly limited.
+	RetentionLimits RetentionPolicy = iota
+
+	// RetentionInterest keeps messages only while there are consumers with interest.
+	// Messages are deleted once all interested consumers have acknowledged.
+	RetentionInterest
+
+	// RetentionWorkQueue makes each message available to only one consumer (queue semantics).
+	// Messages are deleted after being consumed by any one consumer.
+	RetentionWorkQueue
+)
+
+func (r RetentionPolicy) toJetStream() jetstream.RetentionPolicy {
+	switch r {
+	case RetentionInterest:
+		return jetstream.InterestPolicy
+	case RetentionWorkQueue:
+		return jetstream.WorkQueuePolicy
+	default:
+		return jetstream.LimitsPolicy
+	}
+}
+
 type storeLoadOptions struct {
 	startVersion es.Version
 	startSeq     uint64 // startSeq is the minimum sequence to include
@@ -35,6 +63,20 @@ type EventStoreConfig struct {
 	StreamSubjects []string     // StreamSubjects is the list of subjects the stream is fed with
 	StreamName     string
 	RenameType     func(string) string
+
+	// Retention defines the retention policy for the stream (default: RetentionLimits).
+	Retention RetentionPolicy
+
+	// At least one of MaxAge, MaxBytes, or MaxMsgs must be set to prevent unbounded growth.
+
+	// MaxAge is the maximum age of messages in the stream.
+	MaxAge time.Duration
+
+	// MaxBytes is the maximum total size of messages in the stream.
+	MaxBytes int64
+
+	// MaxMsgs is the maximum number of messages in the stream.
+	MaxMsgs int64
 }
 
 type EventStore struct {
@@ -48,6 +90,10 @@ type EventStore struct {
 }
 
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
+	if cfg.MaxAge == 0 && cfg.MaxBytes == 0 && cfg.MaxMsgs == 0 {
+		return nil, errors.New("at least one retention limit must be set (MaxAge, MaxBytes, or MaxMsgs)")
+	}
+
 	doConnect := cfg.Connect
 	if doConnect == nil {
 		doConnect = ConnectDefault()
@@ -79,8 +125,18 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 	}
 
 	streamSubjects := cfg.StreamSubjects
-	if streamSubjects == nil || len(streamSubjects) == 0 {
+	if len(streamSubjects) == 0 {
 		return nil, errors.New("stream subjects are required")
+	}
+
+	// Apply values for stream config (0 means unlimited in NATS for these fields)
+	maxBytes := cfg.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = -1
+	}
+	maxMsgs := cfg.MaxMsgs
+	if maxMsgs == 0 {
+		maxMsgs = -1
 	}
 
 	log = log.With(
@@ -91,21 +147,15 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 	log.Debug("ensuring stream")
 
-	// TODO: retentions
-
 	stream, streamInfo, err := ensureStream(js, jetstream.StreamConfig{
-		Name:     streamName,
-		Subjects: streamSubjects,
-		//Retention:  jetstream.LimitsPolicy,
-		//Storage: jetstream.MemoryStorage,
-		Storage: jetstream.FileStorage,
-		//MaxAge:     0,
-		//DenyDelete: true,
-		//DenyPurge:  true,
-		FirstSeq: 1,
-		//Duplicates: 1 * time.Minute,
-		//NoAck:      false,
-		//Replicas:   0,
+		Name:      streamName,
+		Subjects:  streamSubjects,
+		Retention: cfg.Retention.toJetStream(),
+		Storage:   jetstream.FileStorage,
+		MaxAge:    cfg.MaxAge,
+		MaxBytes:  maxBytes,
+		MaxMsgs:   maxMsgs,
+		FirstSeq:  1,
 	})
 	if err != nil {
 		return nil, err
@@ -126,7 +176,14 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 
 func (e *EventStore) Close() error {
 	e.js.CleanupPublisher()
-	e.nc.Close()
+	// Drain gracefully shuts down by unsubscribing all subscriptions,
+	// waiting for pending messages to be processed, and flushing outgoing messages.
+	// This is preferred over nc.Close() which closes immediately.
+	if err := e.nc.Drain(); err != nil {
+		e.nc.Close()
+		e.log.Debug("closed event store (drain failed)", slog.Any("error", err))
+		return nil
+	}
 	e.log.Debug("closed event store")
 	return nil
 }
@@ -208,13 +265,13 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	go func() {
 		defer func() {
+			stop() // ensure cleanup even on error exit
 			e.log.Debug("unsubscribed")
 			close(ch)
 		}()
 
 		for {
-
-			msg, err := msgCtx.Next( /*jetstream.NextContext(ctx)*/ )
+			msg, err := msgCtx.Next()
 			if err != nil {
 				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
 					return
@@ -278,7 +335,7 @@ func (e *EventStore) Load(
 	)
 
 	defer func() {
-		if err != nil {
+		if err == nil {
 			e.log.Debug(
 				"loaded events",
 				slog.Group(
@@ -291,6 +348,7 @@ func (e *EventStore) Load(
 					startVersion.SlogAttrWithKey("start_version"),
 					slog.Uint64("start_seq", startSeq),
 				),
+				slog.Int("count", len(loadedEvents)),
 				slog.Duration("duration", time.Since(startAt)),
 			)
 		}

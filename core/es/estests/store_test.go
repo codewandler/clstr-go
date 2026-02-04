@@ -38,6 +38,7 @@ func getStoreSUTs(t *testing.T) []testCase {
 				Connect:        connectNatsC,
 				StreamSubjects: streamSubjects,
 				SubjectPrefix:  subjectPrefix,
+				MaxMsgs:        100_000,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, natsES)
@@ -62,6 +63,7 @@ func getStoreSUTs(t *testing.T) []testCase {
 				Connect:        connectNatsC,
 				StreamSubjects: streamSubjects,
 				SubjectPrefix:  subjectPrefix,
+				MaxMsgs:        100_000,
 			})
 			require.NoError(t, err)
 			require.NotNil(t, natsES)

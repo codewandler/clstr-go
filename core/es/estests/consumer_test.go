@@ -48,7 +48,7 @@ func TestConsumer_WithCheckpoint(t *testing.T) {
 
 	te := es.StartTestEnv(t, es.WithAggregates(new(domain.TestAgg)))
 	cp := es.NewInMemCpStore()
-	_ = cp.Set(5)
+	_ = cp.Set(t.Context(), 5)
 
 	c := te.NewConsumer(
 		es.Handle(func(m es.MsgCtx) error {

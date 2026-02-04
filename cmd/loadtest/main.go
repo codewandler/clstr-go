@@ -213,6 +213,7 @@ func createNatsEnv(log *slog.Logger, lt nats.Testing) (env *es.Env) {
 		StreamSubjects: []string{
 			"clstr.>",
 		},
+		MaxMsgs: 1_000_000, // 1M messages max
 	})
 	checkErr(err)
 

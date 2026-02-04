@@ -1,6 +1,7 @@
 package es
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -11,13 +12,13 @@ var (
 
 type (
 	CpStore interface {
-		Get() (lastSeq uint64, err error)
-		Set(lastSeq uint64) error
+		Get(ctx context.Context) (lastSeq uint64, err error)
+		Set(ctx context.Context, lastSeq uint64) error
 	}
 
 	AggCpStore interface {
-		Get(projectionName, aggKey string) (lastVersion Version, err error)
-		Set(projectionName, aggKey string, lastVersion Version) error
+		Get(ctx context.Context, projectionName, aggKey string) (lastVersion Version, err error)
+		Set(ctx context.Context, projectionName, aggKey string, lastVersion Version) error
 	}
 )
 
@@ -35,13 +36,13 @@ func NewInMemCpStore() *InMemCpStore {
 	return &InMemCpStore{}
 }
 
-func (s *InMemCpStore) Get() (uint64, error) {
+func (s *InMemCpStore) Get(_ context.Context) (uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.v, nil
 }
 
-func (s *InMemCpStore) Set(v uint64) error {
+func (s *InMemCpStore) Set(_ context.Context, v uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.v = v
@@ -61,7 +62,7 @@ func NewInMemAggCpStore() *InMemAggCpStore {
 	return &InMemAggCpStore{m: map[string]map[string]Version{}}
 }
 
-func (s *InMemAggCpStore) Get(proj, aggID string) (Version, error) {
+func (s *InMemAggCpStore) Get(_ context.Context, proj, aggID string) (Version, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pm, ok := s.m[proj]
@@ -75,7 +76,7 @@ func (s *InMemAggCpStore) Get(proj, aggID string) (Version, error) {
 	return v, nil
 }
 
-func (s *InMemAggCpStore) Set(proj, aggID string, v Version) error {
+func (s *InMemAggCpStore) Set(_ context.Context, proj, aggID string, v Version) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pm, ok := s.m[proj]
@@ -93,7 +94,9 @@ var _ AggCpStore = (*InMemAggCpStore)(nil)
 
 type NoopAggCpStore struct{}
 
-func (NoopAggCpStore) Get(proj, aggID string) (Version, error) { return 0, ErrCheckpointNotFound }
-func (NoopAggCpStore) Set(proj, aggID string, v Version) error { return nil }
+func (NoopAggCpStore) Get(_ context.Context, _, _ string) (Version, error) {
+	return 0, ErrCheckpointNotFound
+}
+func (NoopAggCpStore) Set(_ context.Context, _, _ string, _ Version) error { return nil }
 
 func NewNoopCpStore() AggCpStore { return NoopAggCpStore{} }

@@ -75,10 +75,10 @@ type checkpointHandler struct {
 	h  Handler
 }
 
-func (c *checkpointHandler) GetLastSeq() (uint64, error) { return c.cp.Get() }
+func (c *checkpointHandler) GetLastSeq(ctx context.Context) (uint64, error) { return c.cp.Get(ctx) }
 
 func (c *checkpointHandler) Handle(msgCtx MsgCtx) (err error) {
-	lastSeenSeq, err := c.cp.Get()
+	lastSeenSeq, err := c.cp.Get(msgCtx.Context())
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (c *checkpointHandler) Handle(msgCtx MsgCtx) (err error) {
 		return err
 	}
 
-	err = c.cp.Set(msgCtx.Seq())
+	err = c.cp.Set(msgCtx.Context(), msgCtx.Seq())
 	if err != nil {
 		return err
 	}
