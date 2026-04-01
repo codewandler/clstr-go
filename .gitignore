@@ -2,3 +2,4 @@
 *.cov
 report.xml
 .devspace
+.coder/plans
