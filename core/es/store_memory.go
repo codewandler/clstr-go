@@ -39,6 +39,7 @@ func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) 
 	sub := &inMemorySubscription{
 		opts: *options,
 		ch:   make(chan Envelope, 1),
+		done: make(chan error), // never written to; in-memory subscriptions don't fail
 		cancel: func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -199,16 +200,15 @@ type inMemorySubscription struct {
 	mu     sync.Mutex
 	opts   SubscribeOpts
 	ch     chan Envelope
+	done   chan error
 	cancel context.CancelFunc
 	maxSeq uint64
 }
 
-func (i *inMemorySubscription) MaxSequence() uint64 {
-	return i.maxSeq
-}
-
-func (i *inMemorySubscription) Chan() <-chan Envelope { return i.ch }
-func (i *inMemorySubscription) Cancel()               { i.cancel() }
+func (i *inMemorySubscription) MaxSequence() uint64      { return i.maxSeq }
+func (i *inMemorySubscription) Chan() <-chan Envelope    { return i.ch }
+func (i *inMemorySubscription) Cancel()                  { i.cancel() }
+func (i *inMemorySubscription) Done() <-chan error       { return i.done }
 
 func (i *inMemorySubscription) dispatch(envelopes []Envelope) {
 	i.mu.Lock()

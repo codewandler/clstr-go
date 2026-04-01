@@ -62,6 +62,10 @@ type Subscription interface {
 	Cancel()
 	MaxSequence() uint64
 	Chan() <-chan Envelope
+	// Done returns a channel that signals subscription termination.
+	// The channel is closed on clean shutdown (context cancelled, Cancel() called).
+	// A non-nil error is sent if the subscription failed unexpectedly.
+	Done() <-chan error
 }
 
 type Stream interface {

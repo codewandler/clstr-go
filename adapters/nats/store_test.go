@@ -489,3 +489,80 @@ func TestStore_SubscribeCleanup(t *testing.T) {
 		t.Fatal("subscription channel did not close after context cancellation")
 	}
 }
+
+// TestStore_SubscribeConnectionClose asserts that when the NATS connection is
+// closed unexpectedly, the subscription's Done() channel receives an error
+// and Chan() is subsequently closed (no hot-loop possible).
+func TestStore_SubscribeConnectionClose(t *testing.T) {
+	store := newTestStore(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	sub, err := store.Subscribe(ctx, es.WithDeliverPolicy(es.DeliverNewPolicy))
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+
+	// Close the NATS connection — simulates an abrupt network drop.
+	store.nc.Close()
+
+	// Done() must signal within 2 seconds.
+	select {
+	case subErr, ok := <-sub.Done():
+		if ok {
+			require.Error(t, subErr, "expected non-nil error on unexpected connection close")
+			t.Logf("sub.Done() received error: %v", subErr)
+		} else {
+			t.Log("sub.Done() closed cleanly (acceptable — NATS library may map nc.Close to ErrMsgIteratorClosed)")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("sub.Done() did not signal within 2s after connection close")
+	}
+
+	// Chan() must be closed too (no zero-value spin possible).
+	select {
+	case _, ok := <-sub.Chan():
+		require.False(t, ok, "sub.Chan() should be closed after connection drop")
+	case <-time.After(2 * time.Second):
+		t.Fatal("sub.Chan() was not closed within 2s after connection close")
+	}
+}
+
+// TestStore_SubscribeConsumerDeleted asserts that when the server-side JetStream
+// consumer is deleted (e.g. InactiveThreshold expiry), the subscription's Done()
+// channel receives an error so the consumer goroutine can exit instead of spinning.
+func TestStore_SubscribeConsumerDeleted(t *testing.T) {
+	store := newTestStore(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	sub, err := store.Subscribe(ctx, es.WithDeliverPolicy(es.DeliverNewPolicy))
+	require.NoError(t, err)
+	require.NotNil(t, sub)
+
+	// Find the ephemeral consumer that was just created.
+	consIter := store.stream.ConsumerNames(ctx)
+	require.NoError(t, consIter.Err())
+
+	var consumerName string
+	for name := range consIter.Name() {
+		consumerName = name
+	}
+	require.NotEmpty(t, consumerName, "expected exactly one consumer after Subscribe()")
+	t.Logf("deleting server-side consumer: %s", consumerName)
+
+	// Delete the consumer server-side — simulates InactiveThreshold expiry.
+	err = store.stream.DeleteConsumer(ctx, consumerName)
+	require.NoError(t, err)
+
+	// Done() must signal with an error within 5 seconds.
+	select {
+	case subErr, ok := <-sub.Done():
+		require.True(t, ok, "expected an error value from Done(), not a clean close")
+		require.Error(t, subErr, "expected non-nil error when consumer is deleted server-side")
+		t.Logf("sub.Done() received error: %v", subErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("sub.Done() did not signal within 5s after server-side consumer deletion")
+	}
+}

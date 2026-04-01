@@ -217,6 +217,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 	}
 
 	ch := make(chan es.Envelope, 64)
+	done := make(chan error, 1)
 
 	consumerCfg := jetstream.ConsumerConfig{
 		DeliverPolicy:     jetstream.DeliverNewPolicy,
@@ -264,9 +265,17 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 	})
 
 	go func() {
+		var exitErr error
 		defer func() {
 			stop() // ensure cleanup even on error exit
 			e.log.Debug("unsubscribed")
+			// Signal subscription termination before closing ch so the consumer
+			// can handle the Done case before seeing a closed channel.
+			if exitErr != nil {
+				done <- exitErr
+			} else {
+				close(done)
+			}
 			close(ch)
 		}()
 
@@ -277,17 +286,20 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 					return
 				}
 				e.log.Error("failed to read next message", slog.Any("error", err))
+				exitErr = err
 				return
 			}
 
 			if err := msg.Ack(); err != nil {
 				e.log.Error("es: failed to ack message", slog.Any("error", err))
+				exitErr = err
 				return
 			}
 
 			ev, err := e.decodeMsg(msg)
 			if err != nil {
 				e.log.Error("es: failed to decode message", slog.Any("error", err))
+				exitErr = err
 				return
 			}
 
@@ -301,6 +313,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	return &jsStoreSubscription{
 		ch:     ch,
+		done:   done,
 		cancel: stop,
 		maxSeq: maxSeq,
 	}, nil
@@ -603,6 +616,7 @@ func (e *EventStore) subjectForAggregate(aggregateType, aggregateID string) stri
 
 type jsStoreSubscription struct {
 	ch     chan es.Envelope
+	done   chan error
 	cancel context.CancelFunc
 	maxSeq uint64
 }
@@ -610,5 +624,6 @@ type jsStoreSubscription struct {
 func (s *jsStoreSubscription) MaxSequence() uint64      { return s.maxSeq }
 func (s *jsStoreSubscription) Cancel()                  { s.cancel() }
 func (s *jsStoreSubscription) Chan() <-chan es.Envelope { return s.ch }
+func (s *jsStoreSubscription) Done() <-chan error       { return s.done }
 
 var _ es.Subscription = (*jsStoreSubscription)(nil)

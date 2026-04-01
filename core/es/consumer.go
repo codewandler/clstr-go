@@ -56,10 +56,12 @@ type Consumer struct {
 	handler         Handler
 	log             *slog.Logger
 	live            chan struct{}
+	liveOnce        sync.Once
 	isLive          atomic.Bool
 	closeChan       chan struct{}
 	closeOnce       sync.Once
 	done            chan struct{}
+	errCh           chan error
 	shutdownTimeout time.Duration
 	name            string
 	metrics         ESMetrics
@@ -135,7 +137,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 	liveAt := sub.MaxSequence()
 	if liveAt == 0 || liveAt == lastSeenSeq {
 		c.isLive.Store(true)
-		close(c.live)
+		c.liveOnce.Do(func() { close(c.live) })
 	}
 
 	go func() {
@@ -150,6 +152,10 @@ func (c *Consumer) Start(ctx context.Context) error {
 			}
 			c.log.Info("stopped")
 			close(c.done)
+			// Unblock Start() if it is still waiting to go live.
+			if !c.isLive.Load() {
+				c.errCh <- fmt.Errorf("subscription ended before consumer became live")
+			}
 		}()
 
 		for {
@@ -159,14 +165,28 @@ func (c *Consumer) Start(ctx context.Context) error {
 			case <-c.closeChan:
 				return
 
+			case subErr, ok := <-sub.Done():
+				if !ok {
+					// Clean shutdown via Done channel (context cancelled or Cancel() called).
+					return
+				}
+				c.log.Error("subscription failed, stopping consumer", slog.Any("error", subErr))
+				return
+
 			case ev := <-sub.Chan():
+				// Defensive guard: a zero-value Envelope means the channel was closed
+				// without a Done() signal (guards against non-compliant Subscription impls).
+				if ev.ID == "" && ev.Type == "" {
+					c.log.Error("subscription channel closed unexpectedly (no Done signal)")
+					return
+				}
 				if err := c.handle(ctx, ev); err != nil {
 					c.log.Error("event handler failed", slog.Any("error", err))
 				}
 				isLive := c.isLive.Load()
 				if !isLive && ev.Seq >= liveAt {
 					c.isLive.Store(true)
-					close(c.live)
+					c.liveOnce.Do(func() { close(c.live) })
 				}
 				// report consumer lag
 				if liveAt > ev.Seq {
@@ -179,10 +199,15 @@ func (c *Consumer) Start(ctx context.Context) error {
 	}()
 
 	c.log.Debug("started, waiting until live")
-	<-c.live
-	c.log.Debug("became live")
-
-	return nil
+	select {
+	case <-c.live:
+		c.log.Debug("became live")
+		return nil
+	case err := <-c.errCh:
+		return fmt.Errorf("consumer died before becoming live: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (c *Consumer) Stop() {
@@ -217,6 +242,7 @@ func NewConsumer(
 		closeChan:       make(chan struct{}),
 		done:            make(chan struct{}),
 		live:            make(chan struct{}),
+		errCh:           make(chan error, 1),
 		handler:         applyMiddlewares(handler, options.mws),
 		shutdownTimeout: options.shutdownTimeout,
 		name:            options.name,
