@@ -96,6 +96,8 @@ func NewEnv(opts ...EnvOption) (e *Env) {
 	return e
 }
 
+func (e *Env) Done() <-chan struct{} { return e.done }
+
 func (e *Env) Start() (err error) {
 	// start all consumers
 	for _, c := range e.consumers {
@@ -103,7 +105,6 @@ func (e *Env) Start() (err error) {
 			return fmt.Errorf("failed to start consumer: %w", err)
 		}
 	}
-
 	return nil
 }
 

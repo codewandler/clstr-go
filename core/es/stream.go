@@ -83,7 +83,7 @@ func matchFilters(env Envelope, filters []SubscribeFilter) bool {
 
 func matchFilter(env Envelope, filter SubscribeFilter) bool {
 	if filter.AggregateType != "" {
-		if env.Type != filter.AggregateType {
+		if env.AggregateType != filter.AggregateType {
 			return false
 		}
 	}

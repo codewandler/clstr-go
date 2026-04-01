@@ -31,6 +31,7 @@ type esMetrics struct {
 	consumerEventDuration *prometheus.HistogramVec
 	consumerEvents        *prometheus.CounterVec
 	consumerLag           *prometheus.GaugeVec
+	consumerReconnects    *prometheus.CounterVec
 }
 
 // NewESMetrics creates a new Prometheus implementation of ESMetrics.
@@ -107,6 +108,11 @@ func NewESMetrics(reg prometheus.Registerer) es.ESMetrics {
 			Name: "clstr_es_consumer_lag",
 			Help: "Consumer lag (sequences behind)",
 		}, []string{"consumer"}),
+
+		consumerReconnects: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "clstr_es_consumer_reconnects_total",
+			Help: "Total number of subscription retry attempts after failure",
+		}, []string{"consumer"}),
 	}
 
 	reg.MustRegister(
@@ -123,6 +129,7 @@ func NewESMetrics(reg prometheus.Registerer) es.ESMetrics {
 		m.consumerEventDuration,
 		m.consumerEvents,
 		m.consumerLag,
+		m.consumerReconnects,
 	)
 
 	return m
@@ -185,6 +192,10 @@ func (m *esMetrics) ConsumerEventProcessed(eventType string, live bool, success 
 
 func (m *esMetrics) ConsumerLag(consumer string, lag int64) {
 	m.consumerLag.WithLabelValues(consumer).Set(float64(lag))
+}
+
+func (m *esMetrics) ConsumerReconnects(consumer string) {
+	m.consumerReconnects.WithLabelValues(consumer).Inc()
 }
 
 var _ es.ESMetrics = (*esMetrics)(nil)

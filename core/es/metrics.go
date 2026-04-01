@@ -28,6 +28,9 @@ type ESMetrics interface {
 	ConsumerEventDuration(eventType string, live bool) metrics.Timer
 	ConsumerEventProcessed(eventType string, live bool, success bool)
 	ConsumerLag(consumer string, lag int64)
+	// ConsumerReconnects increments the counter each time a consumer re-subscribes
+	// after a subscription failure. Useful for alerting on flapping connections.
+	ConsumerReconnects(consumer string)
 }
 
 // nopESMetrics is a no-op implementation of ESMetrics.
@@ -50,6 +53,7 @@ func (nopESMetrics) SnapshotSaveDuration(string) metrics.Timer { return metrics.
 func (nopESMetrics) ConsumerEventDuration(string, bool) metrics.Timer { return metrics.NopTimer() }
 func (nopESMetrics) ConsumerEventProcessed(string, bool, bool)        {}
 func (nopESMetrics) ConsumerLag(string, int64)                        {}
+func (nopESMetrics) ConsumerReconnects(string)                        {}
 
 // NopESMetrics returns a no-op ESMetrics implementation.
 func NopESMetrics() ESMetrics { return nopESMetrics{} }

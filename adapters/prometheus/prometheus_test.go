@@ -58,6 +58,7 @@ func TestNewESMetrics(t *testing.T) {
 	m.ConsumerEventProcessed("UserCreated", false, false)
 
 	m.ConsumerLag("my-consumer", 100)
+	m.ConsumerReconnects("my-consumer")
 
 	// Verify metrics were registered
 	mfs, err := reg.Gather()
@@ -74,6 +75,7 @@ func TestNewESMetrics(t *testing.T) {
 	assert.True(t, names["clstr_es_repo_load_duration_seconds"])
 	assert.True(t, names["clstr_es_cache_hits_total"])
 	assert.True(t, names["clstr_es_consumer_lag"])
+	assert.True(t, names["clstr_es_consumer_reconnects_total"])
 }
 
 func TestNewActorMetrics(t *testing.T) {

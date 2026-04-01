@@ -205,10 +205,10 @@ type inMemorySubscription struct {
 	maxSeq uint64
 }
 
-func (i *inMemorySubscription) MaxSequence() uint64      { return i.maxSeq }
-func (i *inMemorySubscription) Chan() <-chan Envelope    { return i.ch }
-func (i *inMemorySubscription) Cancel()                  { i.cancel() }
-func (i *inMemorySubscription) Done() <-chan error       { return i.done }
+func (i *inMemorySubscription) MaxSequence() uint64   { return i.maxSeq }
+func (i *inMemorySubscription) Chan() <-chan Envelope { return i.ch }
+func (i *inMemorySubscription) Cancel()               { i.cancel() }
+func (i *inMemorySubscription) Done() <-chan error    { return i.done }
 
 func (i *inMemorySubscription) dispatch(envelopes []Envelope) {
 	i.mu.Lock()

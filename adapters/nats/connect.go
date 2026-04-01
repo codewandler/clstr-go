@@ -20,6 +20,8 @@ var connectOpts = []natsgo.Option{
 	natsgo.MaxReconnects(-1),
 	natsgo.ReconnectWait(2 * time.Second),
 	natsgo.Timeout(2 * time.Second),
+	natsgo.PingInterval(5 * time.Second),
+	natsgo.MaxPingsOutstanding(2),
 	natsgo.DisconnectErrHandler(func(nc *natsgo.Conn, err error) {
 		if errors.Is(err, io.EOF) {
 			natsLog.Debug("disconnected", slog.Any("error", err))

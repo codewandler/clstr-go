@@ -246,9 +246,14 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
 
-	msgCtx, err := consumer.Messages()
+	msgCtx, err := consumer.Messages(
+		// PullExpiry caps each pull request at 5 seconds. Without this the
+		// default is 30 seconds, which means a stuck iterator (e.g. after a
+		// server restart that wiped JetStream state) would block msgCtx.Next()
+		// for 30 s before surfacing an error through sub.Done().
+		jetstream.PullExpiry(5 * time.Second),
+	)
 	if err != nil {
-		//cancel()
 		return nil, err
 	}
 

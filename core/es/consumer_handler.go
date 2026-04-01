@@ -86,7 +86,7 @@ func (c *checkpointHandler) Handle(msgCtx MsgCtx) (err error) {
 	minSeq := lastSeenSeq + 1
 
 	if msgCtx.Seq() < minSeq {
-		msgCtx.log.Debug("skip", slog.Uint64("min_seq", minSeq), slog.String("middleware", "checkpoint"))
+		msgCtx.Log().Debug("skip", slog.Uint64("min_seq", minSeq), slog.String("middleware", "checkpoint"))
 		return nil
 	}
 
