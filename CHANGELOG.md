@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.0] — 2026-04-03
+
+### Added
+
+#### Redis KV adapter (`adapters/redis`)
+
+- **`KvStore`** — implements `ports/kv.Store` backed by `go-redis/v9`.
+  `Put` supports per-key TTL via Redis `SET … PX`; `Get` maps `redis.Nil`
+  to `kv.ErrNotFound`; `Delete` is a no-op when the key is absent.
+  Key namespacing is handled by the `Config.KeyPrefix` field
+  (`"{prefix}:{key}"`), consistent with Redis conventions.
+
+- **`NewSnapshotter(cfg Config)`** — wraps `KvStore` in
+  `es.NewKeyValueSnapshotter`, providing a drop-in replacement for
+  `adapters/nats.NewSnapshotter`. Moves ES aggregate and projection snapshot
+  storage to Redis, reducing NATS JetStream KV pressure under high concurrency.
+
+- **`NewTestClient(t Testing) *redis.Client`** — test helper that spins up a
+  `redis:7-alpine` testcontainer and returns a connected client, mirroring
+  `adapters/nats.NewTestContainer`.
+
+- **`go-redis/v9`** added as a new module dependency. The dependency is only
+  pulled in by consumers that import `adapters/redis`; nothing in `core/` or
+  `adapters/nats/` is affected.
+
 ## [v0.31.0] — 2026-04-02
 
 ### Added
