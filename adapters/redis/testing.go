@@ -29,6 +29,7 @@ func NewTestClient(t Testing) *redis.Client {
 		testcontainers.WithExposedPorts("6379/tcp"),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("6379/tcp"),
+			wait.ForLog("Ready to accept connections"),
 		),
 	)
 	require.NoError(t, err)
