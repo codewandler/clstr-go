@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.4] — 2026-04-08
+
+### Fixed
+
+- **NATS EventStore.Load blocks forever when snapshot is at the latest event.**
+  `consumeEvents` switched from `Fetch`-loop to `Messages()` iterator in order to
+  eliminate the final empty-batch `FetchMaxWait` delay. However `iter.Next()` (per
+  NATS docs) "blocks indefinitely until a message is available, iterator is closed
+  or a heartbeat error occurs." When the repository loads with a snapshot, it sets
+  `startSeq = snapshot.StreamSeq + 1`. If the snapshot was taken at the most recent
+  event, `startSeq > endSeq` and the ordered consumer has no messages to deliver on
+  that subject — so `iter.Next()` never returns, hanging `Load` until the test
+  timeout fires (`TestEventStore_All/loadtest`).
+
+  **Fix**: added an early-return guard in `EventStore.Load` before creating the
+  ordered consumer: `if startSeq > 0 && startSeq > endSeq { return nil, nil }`. The
+  snapshot already covers all events; there is nothing to fetch.
+
+- **Replace `Fetch`-loop with `Messages()` iterator in `consumeEvents`.** The old
+  `Fetch(100, FetchMaxWait(5s))` loop caused a 5-second delay on every `Load` because
+  the final batch was always empty and only timed out after the full wait. The new
+  iterator terminates deterministically at `endSeq` with no timeout involvement.
+  Context cancellation is wired via `context.AfterFunc(ctx, iter.Stop)` so `Next()`
+  unblocks promptly when the caller cancels.
+
+### Tests
+
+- `TestStore_Load_NoTimeoutDelay`: verifies that loading 50 events interleaved with
+  a second aggregate completes in under 2 seconds (old code took ≥5 s).
+- `TestStore_Load_ContextCancellation`: verifies that cancelling the caller's context
+  during `Load` returns `context.Canceled` promptly.
+
+---
+
 ## [v0.32.3] — 2026-04-08
 
 ### Fixed

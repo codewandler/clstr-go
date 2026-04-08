@@ -601,3 +601,72 @@ func TestStore_Load_ManyEvents(t *testing.T) {
 			"events must be in version order; got version %d at position %d", ev.Version, i)
 	}
 }
+
+// TestStore_Load_NoTimeoutDelay verifies that Load completes in bounded time
+// proportional to the number of events, NOT the FetchMaxWait timeout.
+// With the old Fetch-loop approach, each Fetch on an ordered consumer reset
+// the server-side consumer and the final batch waited FetchMaxWait (5s) before
+// the empty-batch heuristic broke the loop. With Messages(), termination is
+// deterministic at endSeq — no timeout involved.
+func TestStore_Load_NoTimeoutDelay(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+
+	// Seed 50 events for our target aggregate, interleaved with a second
+	// aggregate so the stream is sparse for each subject.
+	const N = 50
+	for i := 1; i <= N; i++ {
+		for _, id := range []string{"target", "noise"} {
+			_, err := store.Append(ctx, "test", id, es.Version(i-1), []es.Envelope{{
+				ID:            gonanoid.Must(),
+				OccurredAt:    time.Now(),
+				AggregateType: "test",
+				AggregateID:   id,
+				Type:          "evt",
+				Version:       es.Version(i),
+			}})
+			require.NoError(t, err)
+		}
+	}
+
+	// Load must complete well under 2 seconds. Under the old 5 s
+	// FetchMaxWait the final empty-batch wait would blow this budget.
+	start := time.Now()
+	loaded, err := store.Load(ctx, "test", "target")
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.Len(t, loaded, N)
+	require.Less(t, elapsed, 2*time.Second,
+		"Load took %s — should complete without waiting for any fetch timeout", elapsed)
+	t.Logf("Load of %d events took %s", N, elapsed)
+}
+
+// TestStore_Load_ContextCancellation verifies that when the caller's context is
+// cancelled during Load, the operation returns promptly with the context error
+// rather than blocking on message iteration.
+func TestStore_Load_ContextCancellation(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+
+	// Seed a few events so there is something to load.
+	for i := 1; i <= 5; i++ {
+		_, err := store.Append(ctx, "test", "cancel-agg", es.Version(i-1), []es.Envelope{{
+			ID:            gonanoid.Must(),
+			OccurredAt:    time.Now(),
+			AggregateType: "test",
+			AggregateID:   "cancel-agg",
+			Type:          "evt",
+			Version:       es.Version(i),
+		}})
+		require.NoError(t, err)
+	}
+
+	// Create a context that is already cancelled.
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, err := store.Load(cancelCtx, "test", "cancel-agg")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+}

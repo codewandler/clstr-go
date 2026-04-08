@@ -78,11 +78,6 @@ type EventStoreConfig struct {
 	// MaxMsgs is the maximum number of messages in the stream.
 	MaxMsgs int64
 
-	// LoadFetchTimeout is the per-batch max-wait passed to Fetch during Load.
-	// Controls how long the consumer waits for the NATS server to scan through
-	// non-matching stream messages before declaring the batch empty.
-	// Defaults to 5 seconds when zero.
-	LoadFetchTimeout time.Duration
 }
 
 type EventStore struct {
@@ -90,10 +85,9 @@ type EventStore struct {
 	js               jetstream.JetStream
 	stream           jetstream.Stream
 	log              *slog.Logger
-	subjectPrefix    string
-	streamName       string
-	renameType       func(string) string
-	loadFetchTimeout time.Duration
+	subjectPrefix string
+	streamName    string
+	renameType    func(string) string
 }
 
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
@@ -146,11 +140,6 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 		maxMsgs = -1
 	}
 
-	loadFetchTimeout := cfg.LoadFetchTimeout
-	if loadFetchTimeout == 0 {
-		loadFetchTimeout = 5 * time.Second
-	}
-
 	log = log.With(
 		slog.String("store", "nats_js"),
 		slog.String("stream", streamName),
@@ -176,14 +165,13 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 	log.Debug("ensured", slog.Any("stream", streamInfo))
 
 	return &EventStore{
-		nc:               nc,
-		js:               js,
-		log:              log,
-		stream:           stream,
-		subjectPrefix:    subjectPrefix,
-		streamName:       streamName,
-		renameType:       cfg.RenameType,
-		loadFetchTimeout: loadFetchTimeout,
+		nc:            nc,
+		js:            js,
+		log:           log,
+		stream:        stream,
+		subjectPrefix: subjectPrefix,
+		streamName:    streamName,
+		renameType:    cfg.RenameType,
 	}, nil
 }
 
@@ -399,6 +387,14 @@ func (e *EventStore) Load(
 	}
 	endSeq = mre.Seq
 
+	// Nothing to load: the caller's start position is already at or beyond
+	// the latest event (e.g. snapshot was taken at the most recent event).
+	// Without this guard iter.Next() would block forever waiting for a new
+	// message that will never arrive on this subject.
+	if startSeq > 0 && startSeq > endSeq {
+		return loadedEvents, nil
+	}
+
 	// consume
 	consumerCfg := jetstream.OrderedConsumerConfig{
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
@@ -425,52 +421,39 @@ func (e *EventStore) consumeEvents(
 	endSeq uint64,
 ) (loadedEvents []es.Envelope, err error) {
 
-	var (
-		mb  jetstream.MessageBatch
-		msg jetstream.Msg
-		ev  *es.Envelope
-	)
+	iter, err := cc.Messages()
+	if err != nil {
+		return nil, fmt.Errorf("create message iterator: %w", err)
+	}
+	defer iter.Stop()
 
-outer:
+	// Ensure the iterator is stopped when the caller's context is cancelled,
+	// so Next() unblocks promptly instead of waiting for the next server push.
+	stopCtx := context.AfterFunc(ctx, iter.Stop)
+	defer stopCtx()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		mb, err = cc.Fetch(100, jetstream.FetchMaxWait(e.loadFetchTimeout))
+		msg, err := iter.Next()
 		if err != nil {
-			return nil, err
-		}
-		if mb.Error() != nil {
-			return nil, mb.Error()
-		}
-
-		empty := true
-
-		for msg = range mb.Messages() {
-			empty = false
-			ev, err = e.decodeMsg(msg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode message: %w", err)
+			// Surface the original context error when the iterator was closed
+			// because the caller cancelled.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
-
-			loadedEvents = append(loadedEvents, *ev)
-
-			// consume stop criteria
-			if endSeq > 0 && ev.Seq >= endSeq {
-				break outer
-			}
+			return nil, fmt.Errorf("read next message: %w", err)
 		}
 
-		if empty {
-			break
+		ev, err := e.decodeMsg(msg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode message: %w", err)
+		}
+
+		loadedEvents = append(loadedEvents, *ev)
+
+		if ev.Seq >= endSeq {
+			return loadedEvents, nil
 		}
 	}
-
-	return loadedEvents, nil
 }
 
 func (e *EventStore) Append(
