@@ -8,6 +8,22 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
+// ErrorStrategy controls how the consumer reacts when a handler returns an error.
+type ErrorStrategy int
+
+const (
+	// ErrorStrategyStop treats a handler error as a subscription failure: the
+	// consumer cancels the current subscription, backs off, and re-subscribes
+	// from the last checkpoint. The failing event will be retried.
+	// This is the default (fail-safe).
+	ErrorStrategyStop ErrorStrategy = iota
+
+	// ErrorStrategySkip logs the error and continues to the next event.
+	// The failing event is permanently skipped for this consumer.
+	// Use only for handlers where individual event loss is acceptable.
+	ErrorStrategySkip
+)
+
 type (
 	consumerOpts struct {
 		startSeq                uint64
@@ -18,6 +34,7 @@ type (
 		reconnectBackoffInitial time.Duration
 		reconnectBackoffMax     time.Duration
 		metrics                 ESMetrics
+		errorStrategy           ErrorStrategy
 	}
 
 	ConsumerOption interface {
@@ -29,6 +46,7 @@ type (
 	SetMiddlewareOption           valueOption[[]HandlerMiddleware]
 	ConsumerOptions               MultiOption[ConsumerOption]
 	ConsumerShutdownTimeoutOption valueOption[time.Duration]
+	ErrorStrategyOption           valueOption[ErrorStrategy]
 )
 
 func (o ConsumerNameOption) applyToConsumerOpts(opts *consumerOpts) { opts.name = o.v }
@@ -44,7 +62,8 @@ func (o MiddlewareOption) applyToConsumerOpts(opts *consumerOpts) {
 func (o SetMiddlewareOption) applyToConsumerOpts(opts *consumerOpts) {
 	opts.mws = o.v
 }
-func (o LogOption) applyToConsumerOpts(opts *consumerOpts) { opts.log = o.l }
+func (o LogOption) applyToConsumerOpts(opts *consumerOpts)          { opts.log = o.l }
+func (o ErrorStrategyOption) applyToConsumerOpts(opts *consumerOpts) { opts.errorStrategy = o.v }
 func (o ConsumerOptions) applyToConsumerOpts(opts *consumerOpts) {
 	for _, opt := range o.opts {
 		opt.applyToConsumerOpts(opts)
@@ -67,6 +86,10 @@ func WithMiddlewaresAppend(mws ...HandlerMiddleware) MiddlewareOption {
 }
 func WithConsumerOpts(opts ...ConsumerOption) ConsumerOptions { return ConsumerOptions{opts: opts} }
 func WithConsumerName(name string) ConsumerNameOption         { return ConsumerNameOption{name} }
+
+// WithErrorStrategy sets the strategy for handling event handler errors.
+// Default is [ErrorStrategyStop] (retry the failing event after backoff).
+func WithErrorStrategy(s ErrorStrategy) ErrorStrategyOption { return ErrorStrategyOption{v: s} }
 
 // WithShutdownTimeout sets the timeout for handler shutdown when the consumer stops.
 // Default is 5 seconds.

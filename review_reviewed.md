@@ -33,7 +33,7 @@ now-unused `getMostRecentVersionForAgg` helper.
 Line 52: `tasks: make(chan StateTask[T], 1)`. The code, impact, and recommendation are all
 accurate.
 
-### 1.3 HIGH: InMemorySubscription.dispatch Holds Lock During Channel Send — ✅ Confirmed
+### 1.3 HIGH: InMemorySubscription.dispatch Holds Lock During Channel Send — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `core/es/store_memory.go:213-232`
 **Actual location**: `core/es/store_memory.go:213-232` (exact match)
@@ -41,6 +41,10 @@ accurate.
 `mu.Lock()` at line 214, `defer mu.Unlock()` at line 215, then blocking channel send
 `i.ch <- e` at line 230 inside the lock. The review's recommended fix (filter under lock,
 send after unlock) is sound.
+
+**Fix**: Events are now filtered into a temporary slice under lock, then sent after
+releasing the lock. Added `TestInMemoryStore_DispatchDoesNotDeadlock` and
+`TestInMemoryStore_DispatchFilterUnderLock`.
 
 ### 1.4 MEDIUM: LRU Cache Close() Can Panic on Double-Close — ✅ Confirmed ✅ Fixed
 
@@ -79,7 +83,7 @@ UUID-based aggregate IDs.
 `TestKeyValueSnapshotter_getKey_NoCollision` and `TestKeyValueSnapshotter_getKey_Format`
 to verify the fix and prevent regression.
 
-### 1.7 MEDIUM: Redis Snapshotter Uses Unversioned SET — ✅ Confirmed
+### 1.7 MEDIUM: Redis Snapshotter Uses Unversioned SET — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `adapters/redis/kv.go:61`
 **Actual location**: `adapters/redis/kv.go:62`
@@ -87,6 +91,12 @@ to verify the fix and prevent regression.
 `s.client.Set(ctx, s.getKey(key), entry.Data, opts.TTL).Err()` — unconditional overwrite.
 The self-healing analysis in the review is accurate: ES optimistic concurrency limits the
 race window, and event replay corrects the state on next load.
+
+**Fix**: `KeyValueSnapshotter.SaveSnapshot` now reads the existing snapshot first and
+skips the write if the stored `StreamSeq >= new StreamSeq`. Best-effort guard with a
+small TOCTOU window; consequence of losing the race is one extra event replay
+(self-healing). Added `TestKeyValueSnapshotter_SaveSnapshot_DoesNotOverwriteNewer`,
+`_OverwritesOlder`, and `_FirstWrite`.
 
 ---
 
@@ -153,7 +163,7 @@ impact assessment ("acceptable") is fair.
 
 ## 3. Error Handling & Resilience
 
-### 3.1 CRITICAL: Consumer Silently Continues After Handler Errors — ✅ Confirmed
+### 3.1 CRITICAL: Consumer Silently Continues After Handler Errors — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `core/es/consumer.go:162-165`
 **Actual location**: `core/es/consumer.go:191-199`
@@ -162,6 +172,11 @@ In `runSubscription`, line 197: `if err := c.handle(ctx, ev); err != nil` → lo
 at line 198 → continues to next loop iteration. No retry, no DLQ, no circuit breaker.
 
 Line numbers are significantly off (162 vs 191), but the behavior is exactly as described.
+
+**Fix**: Added `ErrorStrategy` (`ErrorStrategyStop` default, `ErrorStrategySkip` opt-in).
+Handler errors now cancel the subscription and retry after backoff, replaying the failed
+event from the checkpoint. Decode errors (unknown event type) are always skipped since
+retrying cannot fix them. Added `DecodeError` type for clean distinction.
 
 ### 3.2 HIGH: No Backpressure in NATS Subscription — ✅ Confirmed
 
@@ -350,17 +365,17 @@ The recommendations are generally sound, with one exception:
 |---|---|---|---|
 | 1.1 | NATS Append TOCTOU | ✅ Confirmed ✅ Fixed | CAS via `ExpectLastSequencePerSubject` |
 | 1.2 | State buffer of 1 | ✅ Confirmed | Lines off by 2 |
-| 1.3 | dispatch holds lock | ✅ Confirmed | Exact line match |
+| 1.3 | dispatch holds lock | ✅ Confirmed ✅ Fixed | Filter under lock, send outside |
 | 1.4 | LRU double-close panic | ✅ Confirmed ✅ Fixed | `sync.Once` + test |
 | 1.5 | perkey workers leak | ✅ Confirmed | |
 | 1.6 | Snapshot key collision | ✅ Confirmed ✅ Fixed | Separator `-` → `:` + tests |
-| 1.7 | Redis unversioned SET | ✅ Confirmed | Line off by 1 |
+| 1.7 | Redis unversioned SET | ✅ Confirmed ✅ Fixed | Read-before-write guard |
 | 2.1 | Load creates consumer | ✅ Confirmed | Lines off by ~18 |
 | 2.2 | JSON everywhere | ✅ Confirmed | Lines off by 0-2 |
 | 2.3 | No pagination | ✅ Confirmed ✅ Fixed | `3dc770d` — FetchNoWait → Fetch |
 | 2.4 | Reflection in hot path | ✅ Confirmed | Lines off by 2 |
 | 2.5 | Shard O(s×n) | ✅ Confirmed | |
-| 3.1 | Consumer swallows errors | ✅ Confirmed | Lines off by ~30 |
+| 3.1 | Consumer swallows errors | ✅ Confirmed ✅ Fixed | `ErrorStrategy` with Stop default |
 | 3.2 | No backpressure | ✅ Confirmed | Lines off by ~17 |
 | 3.3 | Transport error types | ✅ Confirmed | Exact line match |
 | 3.4 | OnPanic no decision | ✅ Confirmed | Lines off by 1 |
@@ -378,7 +393,7 @@ The recommendations are generally sound, with one exception:
 | 9.1 | No header validation | ✅ Confirmed | Exact line match |
 | 9.3 | PII in logs | ✅ Confirmed | Exact line match |
 
-**Totals**: 25 confirmed (4 fixed), 2 incorrect, 1 partially correct.
+**Totals**: 25 confirmed (7 fixed), 2 incorrect, 1 partially correct.
 
 The review is largely accurate. The two incorrect claims — the fabricated stream filter bug
 (§5.4) and the non-existent nil-check example (§4.5) — should be struck from any action

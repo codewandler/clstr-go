@@ -174,7 +174,22 @@ func (k *KeyValueSnapshotter) getKey(objType, objID string) string {
 }
 
 func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapshot, opts SnapshotSaveOpts) error {
-	return kv.Put(ctx, k.store, k.getKey(snapshot.ObjType, snapshot.ObjID), snapshot, kv.PutOptions{
+	key := k.getKey(snapshot.ObjType, snapshot.ObjID)
+
+	// Guard: do not overwrite a newer snapshot. A concurrent goroutine that
+	// finished its Append later may have already written a snapshot with a
+	// higher StreamSeq. Overwriting it would regress the snapshot, causing
+	// unnecessary event replays on the next Load.
+	//
+	// This is a best-effort check (small TOCTOU window), but it eliminates
+	// the vast majority of stale overwrites. The consequence of losing the
+	// race is one extra event replay on next load (self-healing).
+	existing, err := kv.Get[Snapshot](ctx, k.store, key)
+	if err == nil && existing.StreamSeq >= snapshot.StreamSeq {
+		return nil // existing snapshot is newer or equal — skip write
+	}
+
+	return kv.Put(ctx, k.store, key, snapshot, kv.PutOptions{
 		TTL: opts.TTL,
 	})
 }

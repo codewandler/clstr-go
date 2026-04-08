@@ -103,6 +103,7 @@ type Consumer struct {
 	reconnectBackoffMax     time.Duration
 	name                    string
 	metrics                 ESMetrics
+	errorStrategy           ErrorStrategy
 }
 
 // Died returns a channel that is closed when the consumer goroutine exits for
@@ -151,7 +152,7 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 	evt, err := c.decoder.Decode(ev)
 	if err != nil {
 		c.metrics.ConsumerEventProcessed(ev.Type, live, false)
-		return fmt.Errorf("failed to decode event: %w", err)
+		return &DecodeError{Cause: err}
 	}
 	// baseLog is set here; the event-annotated logger is built lazily in
 	// MsgCtx.Log() only when the handler actually calls it.
@@ -169,6 +170,16 @@ func (c *Consumer) handle(ctx context.Context, ev Envelope) error {
 	c.metrics.ConsumerEventProcessed(ev.Type, live, true)
 	return nil
 }
+
+// DecodeError signals that the event decoder (registry) could not decode
+// an event. Retrying is pointless because the event payload will not change.
+// The consumer always skips decode errors regardless of ErrorStrategy.
+type DecodeError struct {
+	Cause error
+}
+
+func (e *DecodeError) Error() string { return fmt.Sprintf("failed to decode event: %s", e.Cause) }
+func (e *DecodeError) Unwrap() error { return e.Cause }
 
 // runSubscription runs the inner event-processing select loop for a single
 // subscription. Returns nil on clean exit (ctx cancel, Stop()), or a non-nil
@@ -195,7 +206,29 @@ func (c *Consumer) runSubscription(ctx context.Context, sub Subscription, liveAt
 				return errors.New("subscription channel closed unexpectedly (no Done signal)")
 			}
 			if err := c.handle(ctx, ev); err != nil {
-				c.log.Error("event handler failed", slog.Any("error", err))
+				// Decode errors can never be fixed by retrying — always skip.
+				var decErr *DecodeError
+				if errors.As(err, &decErr) {
+					c.log.Error("event decode failed, skipping",
+						slog.Any("error", err),
+						slog.Uint64("seq", ev.Seq),
+						slog.String("event_type", ev.Type))
+				} else {
+					// Handler error — follow the configured strategy.
+					switch c.errorStrategy {
+					case ErrorStrategyStop:
+						c.log.Error("event handler failed, stopping subscription for retry",
+							slog.Any("error", err),
+							slog.Uint64("seq", ev.Seq),
+							slog.String("event_type", ev.Type))
+						return fmt.Errorf("handler error at seq %d: %w", ev.Seq, err)
+					case ErrorStrategySkip:
+						c.log.Error("event handler failed, skipping event",
+							slog.Any("error", err),
+							slog.Uint64("seq", ev.Seq),
+							slog.String("event_type", ev.Type))
+					}
+				}
 			}
 			if !c.isLive.Load() && ev.Seq >= liveAt {
 				c.isLive.Store(true)
@@ -384,5 +417,6 @@ func NewConsumer(
 		reconnectBackoffMax:     options.reconnectBackoffMax,
 		name:                    options.name,
 		metrics:                 metrics,
+		errorStrategy:           options.errorStrategy,
 	}
 }

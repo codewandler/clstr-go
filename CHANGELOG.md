@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.3] — 2026-04-08
+
+### Fixed
+
+- **Consumer silently swallows handler errors (§3.1).** When a handler returned an
+  error, the consumer logged it and continued to the next event. The checkpoint
+  advanced past the failed event, making it permanently lost for that consumer.
+  No retry, no dead-letter queue, no alerting beyond a log line.
+
+  **Fix**: added configurable `ErrorStrategy` to the consumer. The default is
+  `ErrorStrategyStop` — a handler error now cancels the current subscription
+  and retries after backoff, replaying the failed event from the checkpoint.
+  The previous fire-and-forget behavior is available via
+  `WithErrorStrategy(ErrorStrategySkip)`. Decode errors (unknown event type)
+  are always skipped regardless of strategy, since retrying cannot fix them.
+
+- **InMemorySubscription.dispatch holds lock during channel send (§1.3).** The
+  in-memory subscription held `mu.Lock()` for the entire dispatch loop, including
+  the blocking `ch <- e` send. A slow consumer would hold the lock indefinitely,
+  blocking concurrent dispatches to the same subscription.
+
+  **Fix**: events are now filtered under lock into a temporary slice, then sent
+  after releasing the lock. The channel send is no longer protected by the mutex.
+
+- **KeyValueSnapshotter.SaveSnapshot can overwrite a newer snapshot (§1.7).** The
+  Redis (and in-memory) KV store used unconditional `SET`, so a slow goroutine
+  saving a stale snapshot at `StreamSeq=5` could overwrite a newer one at
+  `StreamSeq=10`. On the next load, the aggregate would replay 5 extra events.
+
+  **Fix**: `SaveSnapshot` now reads the existing snapshot first and skips the
+  write if the stored `StreamSeq` is greater than or equal to the new one.
+  Best-effort guard (small TOCTOU window); consequence of losing the race is
+  one extra event replay (self-healing).
+
+### Added
+
+- `ErrorStrategy` type with `ErrorStrategyStop` (default) and `ErrorStrategySkip`.
+- `WithErrorStrategy(s)` consumer option.
+- `DecodeError` type for distinguishing decode failures from handler errors.
+
+---
+
 ## [v0.32.2] — 2026-04-08
 
 ### Fixed

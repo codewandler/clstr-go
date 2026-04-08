@@ -211,22 +211,26 @@ func (i *inMemorySubscription) Cancel()               { i.cancel() }
 func (i *inMemorySubscription) Done() <-chan error    { return i.done }
 
 func (i *inMemorySubscription) dispatch(envelopes []Envelope) {
+	// Filter under lock to protect opts from concurrent mutation.
 	i.mu.Lock()
-	defer i.mu.Unlock()
-
+	filtered := make([]Envelope, 0, len(envelopes))
 	for _, e := range envelopes {
 		if e.Seq < i.opts.startSequence {
 			continue
 		}
-
 		if e.Version < i.opts.startVersion {
 			continue
 		}
-
 		if !matchFilters(e, i.opts.filters) {
 			continue
 		}
+		filtered = append(filtered, e)
+	}
+	i.mu.Unlock()
 
+	// Send without holding the lock so slow consumers don't block
+	// concurrent dispatches or other subscription operations.
+	for _, e := range filtered {
 		i.ch <- e
 	}
 }
