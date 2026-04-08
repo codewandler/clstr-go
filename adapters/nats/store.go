@@ -77,16 +77,23 @@ type EventStoreConfig struct {
 
 	// MaxMsgs is the maximum number of messages in the stream.
 	MaxMsgs int64
+
+	// LoadFetchTimeout is the per-batch max-wait passed to Fetch during Load.
+	// Controls how long the consumer waits for the NATS server to scan through
+	// non-matching stream messages before declaring the batch empty.
+	// Defaults to 5 seconds when zero.
+	LoadFetchTimeout time.Duration
 }
 
 type EventStore struct {
-	nc            *natsgo.Conn
-	js            jetstream.JetStream
-	stream        jetstream.Stream
-	log           *slog.Logger
-	subjectPrefix string
-	streamName    string
-	renameType    func(string) string
+	nc               *natsgo.Conn
+	js               jetstream.JetStream
+	stream           jetstream.Stream
+	log              *slog.Logger
+	subjectPrefix    string
+	streamName       string
+	renameType       func(string) string
+	loadFetchTimeout time.Duration
 }
 
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
@@ -139,6 +146,11 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 		maxMsgs = -1
 	}
 
+	loadFetchTimeout := cfg.LoadFetchTimeout
+	if loadFetchTimeout == 0 {
+		loadFetchTimeout = 5 * time.Second
+	}
+
 	log = log.With(
 		slog.String("store", "nats_js"),
 		slog.String("stream", streamName),
@@ -164,13 +176,14 @@ func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 	log.Debug("ensured", slog.Any("stream", streamInfo))
 
 	return &EventStore{
-		nc:            nc,
-		js:            js,
-		log:           log,
-		stream:        stream,
-		subjectPrefix: subjectPrefix,
-		streamName:    streamName,
-		renameType:    cfg.RenameType,
+		nc:               nc,
+		js:               js,
+		log:              log,
+		stream:           stream,
+		subjectPrefix:    subjectPrefix,
+		streamName:       streamName,
+		renameType:       cfg.RenameType,
+		loadFetchTimeout: loadFetchTimeout,
 	}, nil
 }
 
@@ -346,10 +359,9 @@ func (e *EventStore) Load(
 	}
 
 	var (
-		startAt      = time.Now()
-		subj         = e.subjectForAggregate(aggType, aggID)
-		startSeq     = loadOpts.startSeq
-		startVersion = loadOpts.startVersion
+		startAt  = time.Now()
+		subj     = e.subjectForAggregate(aggType, aggID)
+		startSeq = loadOpts.startSeq
 	)
 
 	defer func() {
@@ -363,7 +375,7 @@ func (e *EventStore) Load(
 				),
 				slog.Group(
 					"opts",
-					startVersion.SlogAttrWithKey("start_version"),
+					loadOpts.startVersion.SlogAttrWithKey("start_version"),
 					slog.Uint64("start_seq", startSeq),
 				),
 				slog.Int("count", len(loadedEvents)),
@@ -372,7 +384,9 @@ func (e *EventStore) Load(
 		}
 	}()
 
-	// get end sequence TODO: verify this is actually correct
+	// endSeq is the global stream sequence of the last known event for this aggregate.
+	// The consumer stops as soon as it delivers a message at or beyond this seq,
+	// preventing unbounded reads if new events are appended during Load.
 	var endSeq uint64
 	var mre *es.Envelope
 	mre, err = e.getMostRecentEventForAgg(ctx, aggType, aggID)
@@ -426,7 +440,7 @@ outer:
 		default:
 		}
 
-		mb, err = cc.FetchNoWait(100)
+		mb, err = cc.Fetch(100, jetstream.FetchMaxWait(e.loadFetchTimeout))
 		if err != nil {
 			return nil, err
 		}

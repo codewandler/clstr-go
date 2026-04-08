@@ -566,3 +566,38 @@ func TestStore_SubscribeConsumerDeleted(t *testing.T) {
 		t.Fatal("sub.Done() did not signal within 5s after server-side consumer deletion")
 	}
 }
+
+func TestStore_Load_ManyEvents(t *testing.T) {
+	const N = 250
+
+	store := newTestStore(t)
+
+	ctx := t.Context()
+
+	// Interleave events for two aggregates so that agg-a's events are
+	// sparse relative to the global stream — mirroring the production
+	// failure where FetchNoWait exits after the first batch of 100.
+	for i := 1; i <= N; i++ {
+		for _, id := range []string{"agg-a", "agg-b"} {
+			_, err := store.Append(ctx, "test", id, es.Version(i-1), []es.Envelope{{
+				ID:            gonanoid.Must(),
+				OccurredAt:    time.Now(),
+				AggregateType: "test",
+				AggregateID:   id,
+				Type:          "evt",
+				Version:       es.Version(i),
+			}})
+			require.NoError(t, err)
+		}
+	}
+
+	// Load all events for agg-a only.
+	loaded, err := store.Load(ctx, "test", "agg-a")
+	require.NoError(t, err)
+	require.Len(t, loaded, N, "must load all %d events, not just the first FetchNoWait batch", N)
+
+	for i, ev := range loaded {
+		require.EqualValues(t, i+1, ev.Version,
+			"events must be in version order; got version %d at position %d", ev.Version, i)
+	}
+}
