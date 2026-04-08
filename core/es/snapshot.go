@@ -170,7 +170,7 @@ func NewKeyValueSnapshotter(store kv.Store) *KeyValueSnapshotter {
 }
 
 func (k *KeyValueSnapshotter) getKey(objType, objID string) string {
-	return fmt.Sprintf("%s-%s", objType, objID)
+	return fmt.Sprintf("%s:%s", objType, objID)
 }
 
 func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapshot, opts SnapshotSaveOpts) error {

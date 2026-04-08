@@ -2,6 +2,79 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.2] — 2026-04-08
+
+### Fixed
+
+- **EventStore.Load exits prematurely on sparse subject filters (§2.3).** `consumeEvents`
+  used `FetchNoWait` to pull events from a NATS ordered consumer. On streams where an
+  aggregate's events are sparse relative to the total message volume (e.g. 1 out of every
+  ~100 global messages matches the subject filter), the server-side delivery queue empties
+  momentarily between batches. `FetchNoWait` returns zero messages in that window, setting
+  `empty=true` and breaking the loop — returning only the first batch (~100 events) instead
+  of all events. In the worst case, the ordered consumer's self-healing reset mechanism
+  caused `FetchNoWait` to deadlock entirely.
+
+  **Production impact**: aggregates with large event histories (29 k–48 k events) that had
+  no Redis snapshot (introduced in v0.32.0) could never be fully loaded. Every `Load` call
+  returned a partially-hydrated aggregate at version ~100. All subsequent `Save` attempts
+  failed with a concurrency conflict (`expected version 100, got 29791`), which prevented
+  snapshot creation, which caused an infinite retry loop.
+
+  **Fix**: replaced `FetchNoWait` with `Fetch(n, FetchMaxWait(timeout))`. The default
+  timeout is 5 seconds (configurable via `EventStoreConfig.LoadFetchTimeout`). This gives
+  the NATS server time to scan through non-matching messages and fill the next delivery
+  batch before the pull request expires.
+
+- **Removed dead `startVersion` local variable in `EventStore.Load`.** The variable was
+  assigned from `loadOpts.startVersion` but served only as a `slog` argument. It is now
+  referenced inline. No behaviour change.
+
+- **Removed unresolved TODO comment** from the `endSeq` computation in `EventStore.Load`.
+  The logic is correct: `endSeq` is the global stream sequence of the last known event for
+  the aggregate at the time `Load` is called, which correctly bounds consumption without
+  missing events appended before the call.
+
+- **NATS EventStore.Append TOCTOU race condition (§1.1).** The `Append` method used a
+  best-effort read-then-compare pattern: `getMostRecentVersionForAgg` → version check →
+  publish loop. Between the version check and the first publish, another writer could
+  append events to the same aggregate, and both would succeed — violating the optimistic
+  concurrency guarantee that is the foundation of event sourcing.
+
+  **Fix**: the first event in each `Append` batch now carries a JetStream
+  `ExpectLastSequencePerSubject` header, turning the publish into an atomic
+  compare-and-swap. If another writer slipped in, the server rejects the publish with
+  `wrong last sequence` which is mapped to `ErrConcurrencyConflict`. Subsequent events in
+  the same batch are sequenced naturally by JetStream. `PublishMsgAsync` was replaced with
+  synchronous `PublishMsg` so the CAS rejection is detected immediately. The now-unused
+  `getMostRecentVersionForAgg` helper was removed.
+
+- **LRU Cache `Close()` panics on double-close (§1.4).** `Close()` called `close(doneCh)`
+  directly. A second call panicked, despite the doc comment claiming idempotency.
+
+  **Fix**: wrapped with `sync.Once`. Added `TestLRU_Close_Idempotent` covering
+  double-close and post-close no-op behaviour.
+
+- **KeyValueSnapshotter key collision (§1.6).** `getKey` used `-` as the separator between
+  aggregate type and ID (`"order-item-99"`). When aggregate IDs contain hyphens (UUIDs),
+  different type/ID pairs can produce identical keys — e.g. `("order", "item-99")` and
+  `("order-item", "99")` both yield `"order-item-99"`. On `LoadSnapshot` the wrong
+  aggregate's state would be restored, causing silent data corruption.
+
+  **Fix**: changed separator to `:` (`"order:item-99"` vs `"order-item:99"`). Added
+  `TestKeyValueSnapshotter_getKey_NoCollision` and `TestKeyValueSnapshotter_getKey_Format`.
+
+---
+
+## [v0.32.1] — 2026-04-08
+
+### Fixed
+
+- **Redis testcontainer readiness check.** `wait.ForListeningPort` only confirms the TCP
+  port is open but Redis may not yet be ready to serve commands. Added
+  `wait.ForLog("Ready to accept connections")` so the container is only used once the
+  server has fully initialised — mirrors the existing NATS testcontainer pattern.
+
 ## [v0.32.0] — 2026-04-03
 
 ### Added

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"container/list"
+	"sync"
 	"time"
 )
 
@@ -50,10 +51,11 @@ type delReq struct {
 // Create with [NewLRU] and call [LRU.Close] when done to stop the
 // background goroutine.
 type LRU struct {
-	getCh  chan getReq
-	putCh  chan putReq
-	delCh  chan delReq
-	doneCh chan struct{}
+	getCh     chan getReq
+	putCh     chan putReq
+	delCh     chan delReq
+	doneCh    chan struct{}
+	closeOnce sync.Once
 }
 
 // Get retrieves a value by key. Returns false if not found or expired.
@@ -90,7 +92,7 @@ func (L *LRU) Delete(key string) {
 // Close stops the background goroutine. After Close returns, all
 // operations become no-ops. Close is idempotent.
 func (L *LRU) Close() {
-	close(L.doneCh)
+	L.closeOnce.Do(func() { close(L.doneCh) })
 }
 
 // NewLRU creates a new LRU cache with the specified options.

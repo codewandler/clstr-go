@@ -491,29 +491,42 @@ func (e *EventStore) Append(
 		return nil, errors.New("aggregate id is empty")
 	}
 
-	// obtain persisted version of the aggregate
-	var mostRecentAvailableVersion es.Version
-	mostRecentAvailableVersion, err = e.getMostRecentVersionForAgg(ctx, aggType, aggID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get version: %w", err)
+	// Determine the expected last subject sequence for atomic CAS.
+	// JetStream's WithExpectLastSequencePerSubject rejects the publish
+	// server-side if another message was appended since we read, closing
+	// the TOCTOU gap that the old best-effort version check had.
+	var expectedLastSubjSeq uint64
+	if expectedVersion > 0 {
+		lm, getErr := e.getMostRecentEventForAgg(ctx, aggType, aggID)
+		if getErr != nil {
+			return nil, fmt.Errorf("failed to get last event: %w", getErr)
+		}
+		if lm == nil {
+			return nil, fmt.Errorf(
+				"%w: expected version %d, got 0 (agg_type=%s agg_id=%s)",
+				es.ErrConcurrencyConflict, expectedVersion, aggType, aggID,
+			)
+		}
+		if lm.Version != expectedVersion {
+			return nil, fmt.Errorf(
+				"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
+				es.ErrConcurrencyConflict, expectedVersion, lm.Version, aggType, aggID,
+			)
+		}
+		expectedLastSubjSeq = lm.Seq
 	}
+	// else: expectedVersion == 0 → new aggregate, expectedLastSubjSeq stays 0
+	// which tells JetStream the subject must have no prior messages.
 
-	// Optimistic check (best-effort): read current last version.
-	if mostRecentAvailableVersion != expectedVersion {
-		return nil, fmt.Errorf(
-			"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
-			es.ErrConcurrencyConflict,
-			expectedVersion,
-			mostRecentAvailableVersion,
-			aggType,
-			aggID,
-		)
-	}
-
-	// append events
+	// Append events. The first publish carries the CAS header;
+	// subsequent events are sequenced by JetStream on the same subject.
 	var lastSeq uint64
-	for _, ev := range events {
-		lastSeq, err = e.append(ctx, aggType, ev)
+	for i, ev := range events {
+		var casSeq *uint64
+		if i == 0 {
+			casSeq = &expectedLastSubjSeq
+		}
+		lastSeq, err = e.append(ctx, aggType, ev, casSeq)
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +535,7 @@ func (e *EventStore) Append(
 	return &es.StoreAppendResult{LastSeq: lastSeq}, nil
 }
 
-func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Envelope) (lastSeq uint64, err error) {
+func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Envelope, casSeq *uint64) (lastSeq uint64, err error) {
 	err = ev.Validate()
 	if err != nil {
 		return 0, fmt.Errorf("failed to validate event: %w", err)
@@ -539,21 +552,24 @@ func (e *EventStore) append(ctx context.Context, aggregateType string, ev es.Env
 		return 0, err
 	}
 
-	var ackF jetstream.PubAckFuture
-	ackF, err = e.js.PublishMsgAsync(
-		msg,
+	opts := []jetstream.PublishOpt{
 		jetstream.WithMsgID(ev.ID),
-	)
+	}
+	if casSeq != nil {
+		opts = append(opts, jetstream.WithExpectLastSequencePerSubject(*casSeq))
+	}
+
+	ack, err := e.js.PublishMsg(ctx, msg, opts...)
 	if err != nil {
+		// Map JetStream wrong-last-sequence error to ErrConcurrencyConflict.
+		var apiErr *jetstream.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence {
+			return 0, fmt.Errorf("%w: %s", es.ErrConcurrencyConflict, err)
+		}
 		return 0, fmt.Errorf("failed to append to subject %s %s: %w", subject, ev.Type, err)
 	}
 
-	select {
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	case ack := <-ackF.Ok():
-		return ack.Sequence, nil
-	}
+	return ack.Sequence, nil
 }
 
 func ensureStream(js jetstream.JetStream, cfg jetstream.StreamConfig) (s jetstream.Stream, si *jetstream.StreamInfo, err error) {
@@ -609,16 +625,6 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 	return
 }
 
-// getMostRecentVersionForAgg reads the last event from the store and returns its version.
-func (e *EventStore) getMostRecentVersionForAgg(ctx context.Context, aggType string, aggID string) (es.Version, error) {
-	if lm, err := e.getMostRecentEventForAgg(ctx, aggType, aggID); err != nil {
-		return 0, err
-	} else if lm != nil {
-		return lm.Version, nil
-	}
-
-	return 0, nil
-}
 
 var _ es.EventStore = &EventStore{}
 

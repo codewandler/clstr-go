@@ -197,3 +197,21 @@ func TestLRU_DefaultSize(t *testing.T) {
 		t.Errorf("expected overflow=999, got %v, %v", val, ok)
 	}
 }
+
+func TestLRU_Close_Idempotent(t *testing.T) {
+	l := NewLRU(LRUOpts{Size: 8})
+
+	// First close should succeed.
+	l.Close()
+
+	// Second close must not panic.
+	l.Close()
+
+	// Operations after close should be no-ops, not block.
+	_, ok := l.Get("anything")
+	if ok {
+		t.Fatal("expected miss after Close")
+	}
+	l.Put("key", "val")
+	l.Delete("key")
+}

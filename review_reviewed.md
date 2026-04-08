@@ -9,7 +9,7 @@ Legend: ✅ Confirmed · ❌ Incorrect · ⚠️ Partially correct
 
 ## 1. Race Conditions & Concurrency Issues
 
-### 1.1 CRITICAL: NATS EventStore Append is Not Atomic — ✅ Confirmed
+### 1.1 CRITICAL: NATS EventStore Append is Not Atomic — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `adapters/nats/store.go:444-491`
 **Actual location**: `adapters/nats/store.go:462-508`
@@ -18,6 +18,12 @@ The TOCTOU pattern exists exactly as described: `getMostRecentVersionForAgg` →
 comparison → append loop. The code itself acknowledges the weakness at line 487 with the
 comment "Optimistic check (best-effort)." No JetStream expected-sequence header is used in
 the `append()` call (line 511-543), so two writers can both pass the check and both succeed.
+
+**Fix**: Replaced the best-effort version check with JetStream's
+`WithExpectLastSequencePerSubject` header for atomic compare-and-swap on the first event
+of each `Append` batch. Switched from `PublishMsgAsync` to synchronous `PublishMsg` so the
+CAS rejection is detected immediately and mapped to `ErrConcurrencyConflict`. Removed the
+now-unused `getMostRecentVersionForAgg` helper.
 
 ### 1.2 HIGH: State Channel Buffer of 1 — ✅ Confirmed
 
@@ -36,7 +42,7 @@ accurate.
 `i.ch <- e` at line 230 inside the lock. The review's recommended fix (filter under lock,
 send after unlock) is sound.
 
-### 1.4 MEDIUM: LRU Cache Close() Can Panic on Double-Close — ✅ Confirmed
+### 1.4 MEDIUM: LRU Cache Close() Can Panic on Double-Close — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `core/cache/lru.go:92-94`
 **Actual location**: `core/cache/lru.go:92-94` (exact match)
@@ -44,6 +50,10 @@ send after unlock) is sound.
 `close(L.doneCh)` with no `sync.Once` protection. **Additional finding the review missed:**
 the doc comment on line 91 reads "Close is idempotent" — but the implementation is not.
 The comment is a lie. The `sync.Once` fix is the right answer.
+
+**Fix**: Added `sync.Once` to `LRU.Close()` so double-close no longer panics — the doc
+comment's idempotency claim is now truthful. Added `TestLRU_Close_Idempotent` covering
+double-close and post-close operations.
 
 ### 1.5 MEDIUM: perkey.Scheduler Workers Never Cleaned Up — ✅ Confirmed
 
@@ -56,7 +66,7 @@ Default buffer size is 64 (line 51: `cfg := &config{bufferSize: 64}`), matching 
 > Note: This section is numbered 1.5 in the review but appears *after* section 1.6 in the
 > document. Minor ordering error.
 
-### 1.6 HIGH: KeyValueSnapshotter Key Collision — ✅ Confirmed
+### 1.6 HIGH: KeyValueSnapshotter Key Collision — ✅ Confirmed ✅ Fixed
 
 **Claimed location**: `core/es/snapshot.go:172`
 **Actual location**: `core/es/snapshot.go:172-173` (exact match)
@@ -64,6 +74,10 @@ Default buffer size is 64 (line 51: `cfg := &config{bufferSize: 64}`), matching 
 `fmt.Sprintf("%s-%s", objType, objID)` — the `-` separator is ambiguous. The collision
 scenario (`"order"` + `"item-99"` = `"order-item"` + `"99"`) is valid and realistic given
 UUID-based aggregate IDs.
+
+**Fix**: Changed separator from `-` to `:` (`fmt.Sprintf("%s:%s", ...)`). Added
+`TestKeyValueSnapshotter_getKey_NoCollision` and `TestKeyValueSnapshotter_getKey_Format`
+to verify the fix and prevent regression.
 
 ### 1.7 MEDIUM: Redis Snapshotter Uses Unversioned SET — ✅ Confirmed
 
@@ -334,12 +348,12 @@ The recommendations are generally sound, with one exception:
 
 | Section | Claim | Verdict | Notes |
 |---|---|---|---|
-| 1.1 | NATS Append TOCTOU | ✅ Confirmed | Lines off by ~18 |
+| 1.1 | NATS Append TOCTOU | ✅ Confirmed ✅ Fixed | CAS via `ExpectLastSequencePerSubject` |
 | 1.2 | State buffer of 1 | ✅ Confirmed | Lines off by 2 |
 | 1.3 | dispatch holds lock | ✅ Confirmed | Exact line match |
-| 1.4 | LRU double-close panic | ✅ Confirmed | Doc comment claims idempotency incorrectly |
+| 1.4 | LRU double-close panic | ✅ Confirmed ✅ Fixed | `sync.Once` + test |
 | 1.5 | perkey workers leak | ✅ Confirmed | |
-| 1.6 | Snapshot key collision | ✅ Confirmed | Exact line match |
+| 1.6 | Snapshot key collision | ✅ Confirmed ✅ Fixed | Separator `-` → `:` + tests |
 | 1.7 | Redis unversioned SET | ✅ Confirmed | Line off by 1 |
 | 2.1 | Load creates consumer | ✅ Confirmed | Lines off by ~18 |
 | 2.2 | JSON everywhere | ✅ Confirmed | Lines off by 0-2 |
@@ -364,7 +378,7 @@ The recommendations are generally sound, with one exception:
 | 9.1 | No header validation | ✅ Confirmed | Exact line match |
 | 9.3 | PII in logs | ✅ Confirmed | Exact line match |
 
-**Totals**: 25 confirmed, 2 incorrect, 1 partially correct.
+**Totals**: 25 confirmed (4 fixed), 2 incorrect, 1 partially correct.
 
 The review is largely accurate. The two incorrect claims — the fabricated stream filter bug
 (§5.4) and the non-existent nil-check example (§4.5) — should be struck from any action
