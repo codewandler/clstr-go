@@ -488,6 +488,43 @@ func TestStore_SubscribeCleanup(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("subscription channel did not close after context cancellation")
 	}
+
+	require.Eventually(t, func() bool {
+		cons := store.stream.ConsumerNames(t.Context())
+		require.NoError(t, cons.Err())
+		var allNames []string
+		for name := range cons.Name() {
+			allNames = append(allNames, name)
+		}
+		return len(allNames) == 0
+	}, 2*time.Second, 50*time.Millisecond, "subscription cancel should delete ephemeral consumer")
+}
+
+func TestStore_SubscribeMaxSequenceScopedToWildcardFilter(t *testing.T) {
+	store := newTestStore(t)
+
+	_, err := store.Append(t.Context(), "test", "tenant-1-agg", 0, []es.Envelope{
+		{
+			ID:            gonanoid.Must(),
+			OccurredAt:    time.Now(),
+			AggregateType: "test",
+			AggregateID:   "tenant-1-agg",
+			Type:          "TestEvent",
+			Version:       1,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = store.js.Publish(t.Context(), "foo.tenant-2.test.tenant-2-agg", []byte(`{}`))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	sub, err := store.Subscribe(ctx, es.WithDeliverPolicy(es.DeliverNewPolicy))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), sub.MaxSequence(), "wildcard head should ignore other tenant subjects")
+	sub.Cancel()
 }
 
 // TestStore_SubscribeConnectionClose asserts that when the NATS connection is

@@ -77,14 +77,13 @@ type EventStoreConfig struct {
 
 	// MaxMsgs is the maximum number of messages in the stream.
 	MaxMsgs int64
-
 }
 
 type EventStore struct {
-	nc               *natsgo.Conn
-	js               jetstream.JetStream
-	stream           jetstream.Stream
-	log              *slog.Logger
+	nc            *natsgo.Conn
+	js            jetstream.JetStream
+	stream        jetstream.Stream
+	log           *slog.Logger
 	subjectPrefix string
 	streamName    string
 	renameType    func(string) string
@@ -207,14 +206,9 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
-	var maxSeq uint64
-	for _, s := range filterSubjects {
-		m, err := e.stream.GetLastMsgForSubject(ctx, s)
-		if err != nil && !errors.Is(err, jetstream.ErrMsgNotFound) {
-			return nil, fmt.Errorf("failed to get last message for subject %q: %w", s, err)
-		} else if err == nil {
-			maxSeq = max(maxSeq, m.Sequence)
-		}
+	maxSeq, err := e.maxSequenceForSubjects(ctx, filterSubjects)
+	if err != nil {
+		return nil, err
 	}
 
 	ch := make(chan es.Envelope, 64)
@@ -246,6 +240,11 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
+	consumerName := ""
+	deleteOnStop := consumerCfg.Name == "" && consumerCfg.Durable == ""
+	if consumerInfo, err := consumer.Info(ctx); err == nil && consumerInfo != nil {
+		consumerName = consumerInfo.Name
+	}
 
 	msgCtx, err := consumer.Messages(
 		// PullExpiry caps each pull request at 5 seconds. Without this the
@@ -263,6 +262,9 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		stopOnce.Do(func() {
 			e.log.Debug("draining subscription")
 			msgCtx.Drain()
+			if deleteOnStop {
+				e.deleteEphemeralConsumer(consumerName)
+			}
 		})
 	}
 
@@ -323,6 +325,84 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		cancel: stop,
 		maxSeq: maxSeq,
 	}, nil
+}
+
+func (e *EventStore) maxSequenceForSubjects(ctx context.Context, subjects []string) (uint64, error) {
+	var maxSeq uint64
+	for _, s := range subjects {
+		seq, err := e.maxSequenceForSubject(ctx, s)
+		if err != nil {
+			return 0, err
+		}
+		maxSeq = max(maxSeq, seq)
+	}
+	return maxSeq, nil
+}
+
+func (e *EventStore) maxSequenceForSubject(ctx context.Context, subject string) (uint64, error) {
+	if !strings.ContainsAny(subject, "*>") {
+		m, err := e.stream.GetLastMsgForSubject(ctx, subject)
+		if err != nil && !errors.Is(err, jetstream.ErrMsgNotFound) {
+			return 0, fmt.Errorf("failed to get last message for subject %q: %w", subject, err)
+		}
+		if err != nil {
+			return 0, nil
+		}
+		return m.Sequence, nil
+	}
+
+	info, err := e.stream.Info(ctx, jetstream.WithSubjectFilter(subject))
+	if err != nil {
+		return 0, fmt.Errorf("failed to get stream info for subject %q: %w", subject, err)
+	}
+	if len(info.State.Subjects) == 0 {
+		return 0, nil
+	}
+
+	consumer, err := e.stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+		DeliverPolicy:     jetstream.DeliverLastPolicy,
+		AckPolicy:         jetstream.AckNonePolicy,
+		FilterSubjects:    []string{subject},
+		InactiveThreshold: time.Minute,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to create last-message probe for subject %q: %w", subject, err)
+	}
+
+	consumerName := ""
+	if consumerInfo, err := consumer.Info(ctx); err == nil && consumerInfo != nil {
+		consumerName = consumerInfo.Name
+	}
+	defer e.deleteEphemeralConsumer(consumerName)
+
+	msg, err := consumer.Next(jetstream.FetchMaxWait(time.Second))
+	if err != nil {
+		if errors.Is(err, natsgo.ErrTimeout) || errors.Is(err, jetstream.ErrNoMessages) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to fetch last message for subject %q: %w", subject, err)
+	}
+
+	meta, err := msg.Metadata()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read last message metadata for subject %q: %w", subject, err)
+	}
+	return meta.Sequence.Stream, nil
+}
+
+func (e *EventStore) deleteEphemeralConsumer(name string) {
+	if name == "" {
+		return
+	}
+	deleteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.stream.DeleteConsumer(deleteCtx, name); err != nil &&
+		!errors.Is(err, jetstream.ErrConsumerNotFound) &&
+		!errors.Is(err, jetstream.ErrStreamNotFound) {
+		e.log.Debug("failed to delete ephemeral consumer",
+			slog.String("consumer", name),
+			slog.Any("error", err))
+	}
 }
 
 func (e *EventStore) Load(
@@ -607,7 +687,6 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 	}
 	return
 }
-
 
 var _ es.EventStore = &EventStore{}
 
