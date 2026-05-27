@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	gonanoid "github.com/matoous/go-nanoid/v2"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
@@ -215,6 +216,10 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		FilterSubjects:    filterSubjects,
 		InactiveThreshold: 10 * time.Minute,
 	}
+	deleteOnStop := consumerCfg.Name == "" && consumerCfg.Durable == ""
+	if deleteOnStop {
+		consumerCfg.Name = gonanoid.Must(8)
+	}
 	switch options.DeliverPolicy() {
 	case es.DeliverNewPolicy:
 		consumerCfg.DeliverPolicy = jetstream.DeliverNewPolicy
@@ -231,10 +236,12 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
+		if deleteOnStop {
+			e.deleteEphemeralConsumer(consumerCfg.Name)
+		}
 		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
-	consumerName := ""
-	deleteOnStop := consumerCfg.Name == "" && consumerCfg.Durable == ""
+	consumerName := consumerCfg.Name
 	consumerInfo, err := consumer.Info(ctx)
 	if err == nil && consumerInfo != nil {
 		consumerName = consumerInfo.Name
@@ -306,8 +313,12 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 					infoCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 					_, infoErr := consumer.Info(infoCtx)
 					cancel()
-					if infoErr == nil {
-						e.log.Warn("missed consumer heartbeat, keeping subscription alive")
+					if infoErr == nil ||
+						errors.Is(infoErr, context.DeadlineExceeded) ||
+						errors.Is(infoErr, natsgo.ErrTimeout) {
+						e.log.Warn("missed consumer heartbeat, keeping subscription alive",
+							slog.Any("error", err),
+							slog.Any("consumer_info_error", infoErr))
 						continue
 					}
 				}
@@ -377,7 +388,9 @@ func (e *EventStore) maxSequenceForSubject(ctx context.Context, subject string) 
 		return 0, nil
 	}
 
+	consumerName := gonanoid.Must(8)
 	consumer, err := e.stream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+		Name:              consumerName,
 		DeliverPolicy:     jetstream.DeliverLastPolicy,
 		AckPolicy:         jetstream.AckNonePolicy,
 		FilterSubjects:    []string{subject},
@@ -387,7 +400,6 @@ func (e *EventStore) maxSequenceForSubject(ctx context.Context, subject string) 
 		return 0, fmt.Errorf("failed to create last-message probe for subject %q: %w", subject, err)
 	}
 
-	consumerName := ""
 	if consumerInfo, err := consumer.Info(ctx); err == nil && consumerInfo != nil {
 		consumerName = consumerInfo.Name
 	}
