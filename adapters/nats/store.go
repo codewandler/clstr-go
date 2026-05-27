@@ -293,6 +293,15 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
 					return
 				}
+				if errors.Is(err, jetstream.ErrNoHeartbeat) {
+					infoCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					_, infoErr := consumer.Info(infoCtx)
+					cancel()
+					if infoErr == nil {
+						e.log.Warn("missed consumer heartbeat, keeping subscription alive")
+						continue
+					}
+				}
 				e.log.Error("failed to read next message", slog.Any("error", err))
 				exitErr = err
 				return
