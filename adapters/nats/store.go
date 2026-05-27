@@ -206,11 +206,6 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		filterSubjects = []string{e.subjectForAggregate("*", "*")}
 	}
 
-	maxSeq, err := e.maxSequenceForSubjects(ctx, filterSubjects)
-	if err != nil {
-		return nil, err
-	}
-
 	ch := make(chan es.Envelope, 64)
 	done := make(chan error, 1)
 
@@ -234,17 +229,31 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 		consumerCfg.OptStartSeq = options.StartSequence()
 	}
 
-	e.log.Debug("subscribe", slog.Any("consumer_config", consumerCfg), slog.Uint64("max_sequence", maxSeq))
-
 	consumer, err := e.stream.CreateOrUpdateConsumer(ctx, consumerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer filter_subjects=%+v: %w", filterSubjects, err)
 	}
 	consumerName := ""
 	deleteOnStop := consumerCfg.Name == "" && consumerCfg.Durable == ""
-	if consumerInfo, err := consumer.Info(ctx); err == nil && consumerInfo != nil {
+	consumerInfo, err := consumer.Info(ctx)
+	if err == nil && consumerInfo != nil {
 		consumerName = consumerInfo.Name
 	}
+
+	var maxSeq uint64
+	if options.StartSequence() > 0 && consumerInfo != nil && consumerInfo.NumPending == 0 {
+		maxSeq = options.StartSequence() - 1
+	} else {
+		maxSeq, err = e.maxSequenceForSubjects(ctx, filterSubjects)
+		if err != nil {
+			if deleteOnStop {
+				e.deleteEphemeralConsumer(consumerName)
+			}
+			return nil, err
+		}
+	}
+
+	e.log.Debug("subscribe", slog.Any("consumer_config", consumerCfg), slog.Uint64("max_sequence", maxSeq))
 
 	msgCtx, err := consumer.Messages(
 		// PullExpiry caps each pull request at 5 seconds. Without this the
@@ -293,7 +302,7 @@ func (e *EventStore) Subscribe(ctx context.Context, opts ...es.SubscribeOption) 
 				if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
 					return
 				}
-				if errors.Is(err, jetstream.ErrNoHeartbeat) {
+				if errors.Is(err, jetstream.ErrNoHeartbeat) || errors.Is(err, natsgo.ErrNoHeartbeat) {
 					infoCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 					_, infoErr := consumer.Info(infoCtx)
 					cancel()
