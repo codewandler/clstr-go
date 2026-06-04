@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.9] — 2026-06-04
+
+### Fixed
+
+- **NATS EventStore: data race on `jetstream.stream.info` between Subscribe and
+  Append.** `stream.Info()` (called transitively from `EventStore.Subscribe` via
+  `maxSequenceForSubject`) writes the underlying `*stream.info` cache, while
+  `stream.GetLastMsgForSubject` (called from `EventStore.Append` via
+  `getMostRecentEventForAgg`) reads `s.info.Config.AllowDirect`. The nats.go
+  jetstream client does not synchronise these accesses, so a concurrent
+  Subscribe + Append trips `-race` and could in principle read a torn pointer.
+  Fix: added an `EventStore.streamMu` mutex held only across the three
+  racing call sites (the two `Info`/`GetLastMsgForSubject` calls in
+  `maxSequenceForSubject` and the `GetLastMsgForSubject` call in
+  `getMostRecentEventForAgg`). The lock is never held across the long-lived
+  message-pull loop, so throughput cost is negligible.
+
 ## [v0.32.4] — 2026-04-08
 
 ### Fixed

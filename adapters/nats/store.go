@@ -88,6 +88,17 @@ type EventStore struct {
 	subjectPrefix string
 	streamName    string
 	renameType    func(string) string
+
+	// streamMu serialises calls into jetstream.Stream.Info and
+	// jetstream.Stream.GetLastMsgForSubject. Both touch the same internal
+	// *StreamInfo cache (s.info) on the underlying nats.go stream without
+	// synchronisation: Info writes it, getMsg reads s.info.Config.AllowDirect.
+	// Concurrent Subscribe (head-sequence probe) and Append (last-msg probe)
+	// trip the race detector and could in principle read a torn pointer.
+	//
+	// Held only for the duration of the racing NATS request — never across
+	// the long-lived message-pull loop — so throughput impact is negligible.
+	streamMu sync.Mutex
 }
 
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
@@ -370,7 +381,9 @@ func (e *EventStore) maxSequenceForSubjects(ctx context.Context, subjects []stri
 
 func (e *EventStore) maxSequenceForSubject(ctx context.Context, subject string) (uint64, error) {
 	if !strings.ContainsAny(subject, "*>") {
+		e.streamMu.Lock()
 		m, err := e.stream.GetLastMsgForSubject(ctx, subject)
+		e.streamMu.Unlock()
 		if err != nil && !errors.Is(err, jetstream.ErrMsgNotFound) {
 			return 0, fmt.Errorf("failed to get last message for subject %q: %w", subject, err)
 		}
@@ -380,7 +393,9 @@ func (e *EventStore) maxSequenceForSubject(ctx context.Context, subject string) 
 		return m.Sequence, nil
 	}
 
+	e.streamMu.Lock()
 	info, err := e.stream.Info(ctx, jetstream.WithSubjectFilter(subject))
+	e.streamMu.Unlock()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get stream info for subject %q: %w", subject, err)
 	}
@@ -702,7 +717,10 @@ func (e *EventStore) getMostRecentEventForAgg(ctx context.Context, aggType, aggI
 	var (
 		subject = e.subjectForAggregate(aggType, aggID)
 	)
-	if lm, getLastErr := e.stream.GetLastMsgForSubject(ctx, subject); getLastErr != nil {
+	e.streamMu.Lock()
+	lm, getLastErr := e.stream.GetLastMsgForSubject(ctx, subject)
+	e.streamMu.Unlock()
+	if getLastErr != nil {
 		if errors.Is(getLastErr, jetstream.ErrMsgNotFound) {
 			return nil, nil
 		}
