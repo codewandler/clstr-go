@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.32.10] — 2026-06-04
+
+### Fixed
+
+- **Release vulnerability gate.** Updated `github.com/testcontainers/testcontainers-go`
+  to v0.42.0 and `golang.org/x/crypto` to v0.52.0 across the main module and
+  example modules, clearing the `govulncheck ./...` failure from the v0.32.9
+  release workflow.
+
 ## [v0.32.9] — 2026-06-04
 
 ### Fixed
