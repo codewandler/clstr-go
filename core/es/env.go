@@ -98,6 +98,26 @@ func NewEnv(opts ...EnvOption) (e *Env) {
 
 func (e *Env) Done() <-chan struct{} { return e.done }
 
+// Live returns a channel that is closed once every consumer in the env has
+// caught up to the stream head (all projections have replayed history and are
+// tailing live). With no consumers the channel is closed immediately. It stops
+// waiting — and never signals live — if the env is shut down first (Done()).
+// Signal-only: no value is ever sent, it is only closed.
+func (e *Env) Live() <-chan struct{} {
+	live := make(chan struct{})
+	go func() {
+		for _, c := range e.consumers {
+			select {
+			case <-c.Live():
+			case <-e.done:
+				return // env shutting down: do not signal live
+			}
+		}
+		close(live)
+	}()
+	return live
+}
+
 func (e *Env) Start() (err error) {
 	// start all consumers
 	for _, c := range e.consumers {

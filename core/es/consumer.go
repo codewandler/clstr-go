@@ -112,6 +112,15 @@ type Consumer struct {
 // Callers can use it to observe consumer lifecycle completion.
 func (c *Consumer) Died() <-chan struct{} { return c.died }
 
+// Live returns a channel that is closed once the consumer has caught up to the
+// stream head — i.e. it has transitioned from historical replay to live
+// tailing. If the consumer is already at head when it starts, the channel is
+// closed promptly after Start without any event being dispatched. Signal-only:
+// no value is ever sent, it is only closed. Mirrors Died() for lifecycle
+// observation — useful for surfacing a "loading vs live" status to clients that
+// replay history before tailing.
+func (c *Consumer) Live() <-chan struct{} { return c.live }
+
 // readCheckpoint returns the last successfully processed sequence number.
 // Returns 0 if no checkpoint exists or the handler does not implement Checkpoint.
 func (c *Consumer) readCheckpoint() uint64 {
