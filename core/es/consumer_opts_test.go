@@ -24,7 +24,7 @@ func TestWithMiddlewaresReplaces(t *testing.T) {
 // the existing list without discarding the previously configured middlewares.
 func TestWithMiddlewaresAppendExtends(t *testing.T) {
 	opts := newConsumerOpts(
-		WithMiddlewares(noopMW),         // set one
+		WithMiddlewares(noopMW),               // set one
 		WithMiddlewaresAppend(noopMW, noopMW), // append two
 	)
 	require.Len(t, opts.mws, 3,

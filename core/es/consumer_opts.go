@@ -54,15 +54,17 @@ func (o StartSeqOption) applyToConsumerOpts(opts *consumerOpts)     { opts.start
 func (o ConsumerShutdownTimeoutOption) applyToConsumerOpts(opts *consumerOpts) {
 	opts.shutdownTimeout = o.v
 }
+
 // MiddlewareOption appends middlewares to the existing list.
 func (o MiddlewareOption) applyToConsumerOpts(opts *consumerOpts) {
 	opts.mws = append(opts.mws, o.v...)
 }
+
 // SetMiddlewareOption replaces the middleware list entirely.
 func (o SetMiddlewareOption) applyToConsumerOpts(opts *consumerOpts) {
 	opts.mws = o.v
 }
-func (o LogOption) applyToConsumerOpts(opts *consumerOpts)          { opts.log = o.l }
+func (o LogOption) applyToConsumerOpts(opts *consumerOpts)           { opts.log = o.l }
 func (o ErrorStrategyOption) applyToConsumerOpts(opts *consumerOpts) { opts.errorStrategy = o.v }
 func (o ConsumerOptions) applyToConsumerOpts(opts *consumerOpts) {
 	for _, opt := range o.opts {
