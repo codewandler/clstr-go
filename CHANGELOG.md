@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.33.1] — 2026-06-11
+
+### Fixed
+
+- **perkey: goroutine leak — idle per-key workers were never retired.**
+  `Scheduler` spawned one worker goroutine per key and only `Close()` ever
+  ended them, so a long-lived scheduler over an unbounded key space (e.g.
+  `es.typedRepo.WithTransaction`, keyed by aggregate ID) leaked one goroutine
+  per unique key for the lifetime of the process ([#3]).
+  Workers now track their claimed tasks (`pending`, guarded by the scheduler
+  mutex) and retire — removing themselves from the worker map and exiting —
+  as soon as nothing queued or claimed remains for their key. A later `Do`
+  for the same key transparently starts a fresh worker. Per-key ordering is
+  unchanged: a worker only retires when no work for its key exists, and all
+  map/claim transitions are serialized on the scheduler mutex. Cancelled
+  enqueues (`DoContext`) release their claim and retire the worker likewise.
+
+[#3]: https://github.com/codewandler/clstr-go/issues/3
+
+## [v0.33.0] — 2026-06-10
+
+### Added
+
+- **ES: `Consumer.Live()` / `Env.Live()` caught-up signal.** Returns a channel
+  closed once the consumer (resp. every consumer in the env) has caught up to
+  the stream head — the transition from historical replay to live tailing.
+  Mirrors the existing `Died()` lifecycle accessor.
+
 ## [v0.32.10] — 2026-06-04
 
 ### Fixed

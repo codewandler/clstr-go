@@ -3,6 +3,7 @@ package perkey
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -293,4 +294,192 @@ func TestScheduler_ManyKeys(t *testing.T) {
 	if total.Load() != 100 {
 		t.Errorf("expected 100 executions, got %d", total.Load())
 	}
+}
+
+// workerCount reports the number of live per-key workers (test helper).
+func (s *Scheduler[K]) workerCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.workers)
+}
+
+// eventually polls cond until it returns true or the deadline expires.
+func eventually(t *testing.T, d time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+func TestScheduler_RetiresIdleWorkers(t *testing.T) {
+	s := New[int]()
+	defer s.Close()
+
+	for i := 0; i < 1000; i++ {
+		if err := s.Do(i, func() error { return nil }); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	// Do returns when the task's result is delivered; the worker's
+	// self-retirement happens just after, so poll briefly.
+	eventually(t, 2*time.Second, func() bool { return s.workerCount() == 0 },
+		"idle workers were not retired")
+}
+
+func TestScheduler_NoGoroutineLeakManyKeys(t *testing.T) {
+	s := New[int]()
+	defer s.Close()
+
+	before := runtime.NumGoroutine()
+
+	for i := 0; i < 500; i++ {
+		_ = s.Do(i, func() error { return nil })
+	}
+
+	eventually(t, 2*time.Second, func() bool {
+		runtime.GC()
+		return runtime.NumGoroutine() <= before+5
+	}, "goroutines did not return to baseline after 500 distinct keys")
+}
+
+func TestScheduler_KeyReusableAfterRetirement(t *testing.T) {
+	s := New[string]()
+	defer s.Close()
+
+	var runs atomic.Int32
+	if err := s.Do("key", func() error { runs.Add(1); return nil }); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	eventually(t, 2*time.Second, func() bool { return s.workerCount() == 0 },
+		"worker was not retired after first task")
+
+	// A fresh worker must be created transparently for the same key.
+	if err := s.Do("key", func() error { runs.Add(1); return nil }); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runs.Load() != 2 {
+		t.Fatalf("expected 2 executions, got %d", runs.Load())
+	}
+}
+
+func TestScheduler_BusyWorkerSurvivesRetirementCheck(t *testing.T) {
+	s := New[string]()
+	defer s.Close()
+
+	var seq []int
+	var mu sync.Mutex
+
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_ = s.Do("key", func() error {
+			mu.Lock()
+			seq = append(seq, 1)
+			mu.Unlock()
+			<-release
+			return nil
+		})
+	}()
+	// Queue a second task behind the first so the worker is never idle in
+	// between; it must not retire with work still claimed.
+	time.Sleep(10 * time.Millisecond)
+	go func() {
+		defer wg.Done()
+		_ = s.Do("key", func() error {
+			mu.Lock()
+			seq = append(seq, 2)
+			mu.Unlock()
+			return nil
+		})
+	}()
+	time.Sleep(10 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seq) != 2 || seq[0] != 1 || seq[1] != 2 {
+		t.Fatalf("expected ordered execution [1 2], got %v", seq)
+	}
+}
+
+func TestScheduler_AbandonedEnqueueReleasesClaim(t *testing.T) {
+	s := New[string](WithBufferSize(1))
+	defer s.Close()
+
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+
+	// Occupy the worker.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = s.Do("key", func() error {
+			close(blocked)
+			<-release
+			return nil
+		})
+	}()
+	<-blocked
+
+	// Fill the buffer (size 1).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = s.Do("key", func() error { return nil })
+	}()
+	time.Sleep(10 * time.Millisecond)
+
+	// This enqueue blocks on the full buffer; cancelling must abandon the
+	// claim without disturbing the queued work.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := s.DoContext(ctx, "key", func() error {
+		t.Error("abandoned task must not execute")
+		return nil
+	}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+
+	close(release)
+	wg.Wait()
+
+	eventually(t, 2*time.Second, func() bool { return s.workerCount() == 0 },
+		"worker was not retired after abandoned enqueue")
+}
+
+func TestScheduler_ConcurrentCancellationStress(t *testing.T) {
+	s := New[int](WithBufferSize(1))
+	defer s.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		key := i % 10
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			// Cancel concurrently with the enqueue/wait to exercise both
+			// select branches, including abandonTask's worker retirement.
+			go cancel()
+			_ = s.DoContext(ctx, key, func() error {
+				time.Sleep(time.Millisecond)
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+
+	eventually(t, 5*time.Second, func() bool { return s.workerCount() == 0 },
+		"workers were not retired after concurrent cancellations")
 }

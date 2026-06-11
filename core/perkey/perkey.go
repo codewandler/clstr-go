@@ -3,6 +3,12 @@
 //
 // Typical use-case: event-sourced aggregates, where you want to process
 // commands per aggregate ID sequentially, but different aggregates in parallel.
+//
+// Worker goroutines live only as long as their key has work: once a worker
+// has no queued or claimed tasks left it removes itself from the scheduler
+// and exits. A later Do for the same key starts a fresh worker. Per-key
+// ordering is unaffected, because a worker only retires when nothing for its
+// key remains.
 package perkey
 
 import (
@@ -39,6 +45,11 @@ type Scheduler[K comparable] struct {
 
 type worker struct {
 	tasks chan *task
+	// pending counts tasks claimed for this worker that have not finished:
+	// incremented in DoContext when the worker is picked, decremented after
+	// the task ran or when an enqueue is abandoned on context cancellation.
+	// Guarded by Scheduler.mu. The worker retires when it drops to zero.
+	pending int
 }
 
 type task struct {
@@ -81,6 +92,7 @@ func (s *Scheduler[K]) DoContext(ctx context.Context, key K, fn func() error) er
 	}
 	s.wg.Add(1)
 	w := s.getOrCreateWorkerLocked(key)
+	w.pending++
 	s.mu.Unlock()
 
 	t := &task{
@@ -93,6 +105,7 @@ func (s *Scheduler[K]) DoContext(ctx context.Context, key K, fn func() error) er
 	case w.tasks <- t:
 		// Task enqueued successfully.
 	case <-ctx.Done():
+		s.abandonTask(key, w)
 		s.wg.Done()
 		return ctx.Err()
 	}
@@ -135,6 +148,26 @@ func (s *Scheduler[K]) Close() {
 	s.mu.Unlock()
 }
 
+// abandonTask releases the pending claim of a task that was never enqueued.
+// If that leaves the worker with nothing queued or claimed, the worker is
+// removed from the map and its channel closed so its goroutine exits.
+func (s *Scheduler[K]) abandonTask(key K, w *worker) {
+	s.mu.Lock()
+	w.pending--
+	if w.pending > 0 {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.workers, key)
+	s.mu.Unlock()
+	// Safe to close: pending was zero under mu, so no other goroutine holds a
+	// claim (every sender increments pending before sending), and the worker
+	// is out of the map, so no new claim can appear. Close cannot race this
+	// close either — it waits in wg.Wait() until this Do returns, and by then
+	// the worker is no longer in the map.
+	close(w.tasks)
+}
+
 func (s *Scheduler[K]) getOrCreateWorkerLocked(key K) *worker {
 	w, ok := s.workers[key]
 	if ok {
@@ -145,15 +178,36 @@ func (s *Scheduler[K]) getOrCreateWorkerLocked(key K) *worker {
 		tasks: make(chan *task, s.bufferSize),
 	}
 	s.workers[key] = w
-	go runWorker(w)
+	go s.runWorker(key, w)
 
 	return w
 }
 
-// runWorker processes tasks sequentially for a single key.
-func runWorker(w *worker) {
-	for t := range w.tasks {
+// runWorker processes tasks sequentially for a single key. It exits when its
+// channel is closed (Close, or an abandoned enqueue that retired the worker)
+// or when no queued or claimed tasks remain for the key, in which case it
+// removes itself from the worker map so idle keys do not pin goroutines.
+func (s *Scheduler[K]) runWorker(key K, w *worker) {
+	for {
+		t, ok := <-w.tasks
+		if !ok {
+			return
+		}
 		t.done <- t.fn()
+
+		s.mu.Lock()
+		w.pending--
+		if w.pending == 0 {
+			// Nothing queued or claimed for this key: retire. A concurrent
+			// DoContext for the same key serializes on mu and either lands
+			// its claim before this check (pending > 0, we keep running) or
+			// finds the map entry gone and starts a fresh worker. delete on
+			// the nil map left behind by Close is a no-op.
+			delete(s.workers, key)
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
 	}
 }
 
