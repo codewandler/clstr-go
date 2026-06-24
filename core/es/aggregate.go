@@ -99,6 +99,13 @@ type BaseAggregate struct {
 	version     Version
 	seq         uint64
 	uncommitted []any
+	// snapshotVersion is the per-aggregate ObjVersion of the most recent snapshot
+	// known for this instance (0 = none). It is set when a snapshot is loaded
+	// (ApplySnapshot) or written (Save), and lets the repository frequency-gate
+	// snapshots — snapshot only every N of THIS aggregate's events — via
+	// WithSnapshotEvery. (Version is per-aggregate; StreamSeq is global, so the
+	// per-aggregate Version is the correct basis for an every-N-events policy.)
+	snapshotVersion Version
 }
 
 func (b *BaseAggregate) Apply(evt any) error {
@@ -131,6 +138,9 @@ func (b *BaseAggregate) setVersion(v Version) { b.version = v }
 func (b *BaseAggregate) GetSeq() uint64       { return b.seq }
 func (b *BaseAggregate) setSeq(s uint64)      { b.seq = s }
 
+func (b *BaseAggregate) getSnapshotVersion() Version  { return b.snapshotVersion }
+func (b *BaseAggregate) setSnapshotVersion(v Version) { b.snapshotVersion = v }
+
 // aggregateVersioner is the internal interface for version/seq management.
 // BaseAggregate implements this to satisfy the Aggregate interface requirements.
 type aggregateVersioner interface {
@@ -139,6 +149,18 @@ type aggregateVersioner interface {
 }
 
 var _ aggregateVersioner = (*BaseAggregate)(nil)
+
+// snapshotVersionTracker is the optional interface the repository uses to
+// implement frequency-gated snapshots (WithSnapshotEvery). Aggregates embedding
+// BaseAggregate satisfy it automatically; the repository type-asserts to it and
+// falls back to always-snapshot semantics when an aggregate does not implement
+// it, so this is fully backward compatible.
+type snapshotVersionTracker interface {
+	getSnapshotVersion() Version
+	setSnapshotVersion(Version)
+}
+
+var _ snapshotVersionTracker = (*BaseAggregate)(nil)
 
 // Raise records an event as uncommitted.
 // (Typically you call Raise+Apply together via a helper like ApplyNew below.)

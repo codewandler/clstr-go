@@ -19,14 +19,23 @@ var (
 )
 
 type (
-	SnapshotterOption valueOption[Snapshotter]
-	SnapshotOption    valueOption[bool]
-	SnapshotTTLOption valueOption[time.Duration]
+	SnapshotterOption   valueOption[Snapshotter]
+	SnapshotOption      valueOption[bool]
+	SnapshotTTLOption   valueOption[time.Duration]
+	SnapshotEveryOption valueOption[uint64]
 )
 
 func WithSnapshotter(s Snapshotter) SnapshotterOption     { return SnapshotterOption{v: s} }
 func WithSnapshot(b bool) SnapshotOption                  { return SnapshotOption{v: b} }
 func WithSnapshotTTL(ttl time.Duration) SnapshotTTLOption { return SnapshotTTLOption{v: ttl} }
+
+// WithSnapshotEvery requests a snapshot on save only once at least n events have
+// been appended to the aggregate since its last snapshot (frequency-gated, like
+// projections' WithSnapshotFrequency). Used in WithTransaction it ALSO enables
+// loading from snapshot. n == 0 means never snapshot (rely on event replay).
+// Events are always persisted before any snapshot, so periodic snapshots only
+// bound the replay length on the next cold load — they never risk data loss.
+func WithSnapshotEvery(n uint64) SnapshotEveryOption { return SnapshotEveryOption{v: n} }
 
 func (o SnapshotterOption) applyToEnv(e *envOptions) { e.snapshotter = o.v }
 
@@ -125,6 +134,11 @@ func ApplySnapshot(ctx context.Context, snapshotter Snapshotter, agg Aggregate) 
 	}
 	agg.setVersion(snapshot.ObjVersion)
 	agg.setSeq(snapshot.StreamSeq)
+	// Record the snapshot's per-aggregate version so the repository can
+	// frequency-gate future snapshot writes (WithSnapshotEvery).
+	if t, ok := any(agg).(snapshotVersionTracker); ok {
+		t.setSnapshotVersion(snapshot.ObjVersion)
+	}
 	return nil
 }
 
@@ -162,11 +176,29 @@ func NewInMemorySnapshotter() *KeyValueSnapshotter {
 // === KV Snapshotter ===
 
 type KeyValueSnapshotter struct {
-	store kv.Store
+	store      kv.Store
+	staleCheck bool
 }
 
-func NewKeyValueSnapshotter(store kv.Store) *KeyValueSnapshotter {
-	return &KeyValueSnapshotter{store: store}
+// KVSnapshotterOption configures a KeyValueSnapshotter.
+type KVSnapshotterOption func(*KeyValueSnapshotter)
+
+// WithStaleCheck toggles the read-before-write guard in SaveSnapshot. It
+// defaults to true. Set it false when saves for a given object id are already
+// serialized (e.g. the repository's per-key scheduler), turning each snapshot
+// write into a single SET instead of GET-then-SET — halving the round-trips on
+// a networked store. Losing the guard only risks one extra event replay on the
+// next load (self-healing).
+func WithStaleCheck(enabled bool) KVSnapshotterOption {
+	return func(k *KeyValueSnapshotter) { k.staleCheck = enabled }
+}
+
+func NewKeyValueSnapshotter(store kv.Store, opts ...KVSnapshotterOption) *KeyValueSnapshotter {
+	k := &KeyValueSnapshotter{store: store, staleCheck: true}
+	for _, o := range opts {
+		o(k)
+	}
+	return k
 }
 
 func (k *KeyValueSnapshotter) getKey(objType, objID string) string {
@@ -184,9 +216,11 @@ func (k *KeyValueSnapshotter) SaveSnapshot(ctx context.Context, snapshot Snapsho
 	// This is a best-effort check (small TOCTOU window), but it eliminates
 	// the vast majority of stale overwrites. The consequence of losing the
 	// race is one extra event replay on next load (self-healing).
-	existing, err := kv.Get[Snapshot](ctx, k.store, key)
-	if err == nil && existing.StreamSeq >= snapshot.StreamSeq {
-		return nil // existing snapshot is newer or equal — skip write
+	if k.staleCheck {
+		existing, err := kv.Get[Snapshot](ctx, k.store, key)
+		if err == nil && existing.StreamSeq >= snapshot.StreamSeq {
+			return nil // existing snapshot is newer or equal — skip write
+		}
 	}
 
 	return kv.Put(ctx, k.store, key, snapshot, kv.PutOptions{

@@ -216,10 +216,28 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 	agg.setVersion(v)
 	agg.ClearUncommitted()
 
-	// create snapshot
-	if saveOptions.snapshot {
+	// create snapshot — either explicitly requested (WithSnapshot), or
+	// frequency-gated (WithSnapshotEvery): snapshot once this aggregate has
+	// accumulated at least N events since its last snapshot. Per-aggregate
+	// Version is the basis (StreamSeq is global, so it would over-trigger on a
+	// busy stream). Events are already durably appended above, so a skipped
+	// snapshot only bounds replay length on the next cold load — never data loss.
+	shouldSnapshot := saveOptions.snapshot
+	if !shouldSnapshot && saveOptions.snapshotEvery > 0 {
+		var lastSnapVersion Version
+		if t, ok := any(agg).(snapshotVersionTracker); ok {
+			lastSnapVersion = t.getSnapshotVersion()
+		}
+		shouldSnapshot = uint64(agg.GetVersion()-lastSnapVersion) >= saveOptions.snapshotEvery
+	}
+	if shouldSnapshot {
+		timer := r.metrics.SnapshotSaveDuration(aggType)
 		if _, snapshotErr := r.CreateSnapshot(ctx, agg, SnapshotSaveOpts{TTL: saveOptions.snapshotTTL}); snapshotErr != nil {
 			return snapshotErr
+		}
+		timer.ObserveDuration()
+		if t, ok := any(agg).(snapshotVersionTracker); ok {
+			t.setSnapshotVersion(agg.GetVersion())
 		}
 	}
 

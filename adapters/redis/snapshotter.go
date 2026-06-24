@@ -8,10 +8,10 @@ import (
 // It wraps a [KvStore] in [es.NewKeyValueSnapshotter], providing the same
 // interface as the NATS-backed snapshotter but storing snapshots in Redis
 // instead of NATS JetStream KV — reducing JetStream load under high concurrency.
-func NewSnapshotter(cfg Config) (*es.KeyValueSnapshotter, error) {
+func NewSnapshotter(cfg Config, opts ...es.KVSnapshotterOption) (*es.KeyValueSnapshotter, error) {
 	store, err := NewKvStore(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return es.NewKeyValueSnapshotter(store), nil
+	return es.NewKeyValueSnapshotter(store, opts...), nil
 }

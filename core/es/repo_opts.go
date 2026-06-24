@@ -27,9 +27,10 @@ type (
 	}
 
 	repoSaveOptions struct {
-		snapshot    bool
-		snapshotTTL time.Duration
-		useCache    bool
+		snapshot      bool
+		snapshotEvery uint64
+		snapshotTTL   time.Duration
+		useCache      bool
 	}
 
 	repoLoadOptions struct {
@@ -106,8 +107,9 @@ func newRepoOpts(opts ...RepositoryOption) repoOpts {
 
 // === save ==
 
-func (o SnapshotOption) applyToSaveOptions(options *repoSaveOptions)     { options.snapshot = true }
-func (o SnapshotTTLOption) applyToSaveOptions(options *repoSaveOptions)  { options.snapshotTTL = o.v }
+func (o SnapshotOption) applyToSaveOptions(options *repoSaveOptions)      { options.snapshot = true }
+func (o SnapshotEveryOption) applyToSaveOptions(options *repoSaveOptions) { options.snapshotEvery = o.v }
+func (o SnapshotTTLOption) applyToSaveOptions(options *repoSaveOptions)   { options.snapshotTTL = o.v }
 func (o RepoUseCacheOption) applyToSaveOptions(options *repoSaveOptions) { options.useCache = o.v }
 func (o SaveOptsOption) applyToSaveOptions(options *repoSaveOptions) {
 	for _, opt := range o.opts {
@@ -182,6 +184,12 @@ func (o LoadOptsOption) applyToWithTransactionOptions(options *repoWithTransacti
 func (o SnapshotOption) applyToWithTransactionOptions(options *repoWithTransactionOpts) {
 	options.saveOpts = append(options.saveOpts, WithSnapshot(o.v))
 	options.loadOpts = append(options.loadOpts, WithSnapshot(o.v))
+}
+func (o SnapshotEveryOption) applyToWithTransactionOptions(options *repoWithTransactionOpts) {
+	// Frequency-gate the snapshot WRITE, but still load from snapshot so cold
+	// loads skip replay up to the last snapshot.
+	options.saveOpts = append(options.saveOpts, o)
+	options.loadOpts = append(options.loadOpts, WithSnapshot(true))
 }
 func (o SnapshotTTLOption) applyToWithTransactionOptions(options *repoWithTransactionOpts) {
 	options.saveOpts = append(options.saveOpts, WithSnapshotTTL(o.v))

@@ -5,10 +5,10 @@ import (
 )
 
 // NewSnapshotter creates a new jetstream key-value-store based snapshotter.
-func NewSnapshotter(cfg KvConfig) (*es.KeyValueSnapshotter, error) {
+func NewSnapshotter(cfg KvConfig, opts ...es.KVSnapshotterOption) (*es.KeyValueSnapshotter, error) {
 	kv, err := NewKvStore(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return es.NewKeyValueSnapshotter(kv), nil
+	return es.NewKeyValueSnapshotter(kv, opts...), nil
 }
