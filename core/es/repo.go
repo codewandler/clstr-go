@@ -339,6 +339,19 @@ func (t *typedRepo[T]) WithTransaction(ctx context.Context, aggID string, fn fun
 			return err
 		}
 
+		// fn mutates the cached aggregate in place (RaiseAndApply applies
+		// events before Save persists them). A failure after this point
+		// leaves applied-but-unpersisted state and stale uncommitted events
+		// on the cached instance — permanently, since cache hits never
+		// re-read the store. Evict so the next load replays the truth.
+		// (DEV-726: one transient append failure otherwise poisons the
+		// aggregate for its whole cached lifetime.)
+		defer func() {
+			if err != nil {
+				t.cache.Delete(aggID)
+			}
+		}()
+
 		// call inner
 		err = fn(a)
 		if err != nil {
@@ -419,6 +432,10 @@ func (t *typedRepo[T]) Save(ctx context.Context, agg T, opts ...SaveOption) (err
 	options := newSaveOptions(WithSaveOpts(t.defaultSaveOpts...), WithSaveOpts(opts...))
 	err = t.r.Save(ctx, agg, opts...)
 	if err != nil {
+		// agg carries applied-but-unpersisted events; a cached copy of it is
+		// now ahead of the store. Evict so the next load replays the truth
+		// instead of serving the dirty instance forever (DEV-726).
+		t.cache.Delete(agg.GetID())
 		return err
 	}
 	if options.useCache {
