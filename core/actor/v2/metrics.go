@@ -15,6 +15,11 @@ type ActorMetrics interface {
 
 	// Scheduler
 	SchedulerInflight(actorID string, count int)
+	// SchedulerQueueDepth reports the number of tasks waiting for an
+	// execution slot. Inflight saturating at its cap is indistinguishable
+	// from a healthy busy scheduler; a growing queue depth is the overload
+	// signal.
+	SchedulerQueueDepth(actorID string, depth int)
 	SchedulerTaskDuration() metrics.Timer
 	SchedulerTaskCompleted(success bool)
 }
@@ -29,6 +34,7 @@ func (nopActorMetrics) MessagePanic(string)                  {}
 func (nopActorMetrics) MailboxDepth(string, int) {}
 
 func (nopActorMetrics) SchedulerInflight(string, int)        {}
+func (nopActorMetrics) SchedulerQueueDepth(string, int)      {}
 func (nopActorMetrics) SchedulerTaskDuration() metrics.Timer { return metrics.NopTimer() }
 func (nopActorMetrics) SchedulerTaskCompleted(bool)          {}
 

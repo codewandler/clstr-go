@@ -14,6 +14,7 @@ type actorMetrics struct {
 	panicTotal            *prometheus.CounterVec
 	mailboxDepth          *prometheus.GaugeVec
 	schedulerInflight     *prometheus.GaugeVec
+	schedulerQueueDepth   *prometheus.GaugeVec
 	schedulerTaskDuration prometheus.Histogram
 	schedulerTasksTotal   *prometheus.CounterVec
 }
@@ -47,6 +48,11 @@ func NewActorMetrics(reg prometheus.Registerer) actor.ActorMetrics {
 			Help: "Number of concurrent scheduled tasks",
 		}, []string{"actor_id"}),
 
+		schedulerQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "clstr_actor_scheduler_queue_depth",
+			Help: "Number of scheduled tasks waiting for an execution slot",
+		}, []string{"actor_id"}),
+
 		schedulerTaskDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "clstr_actor_scheduler_task_duration_seconds",
 			Help:    "Scheduled task duration in seconds",
@@ -65,6 +71,7 @@ func NewActorMetrics(reg prometheus.Registerer) actor.ActorMetrics {
 		m.panicTotal,
 		m.mailboxDepth,
 		m.schedulerInflight,
+		m.schedulerQueueDepth,
 		m.schedulerTaskDuration,
 		m.schedulerTasksTotal,
 	)
@@ -90,6 +97,10 @@ func (m *actorMetrics) MailboxDepth(actorID string, depth int) {
 
 func (m *actorMetrics) SchedulerInflight(actorID string, count int) {
 	m.schedulerInflight.WithLabelValues(actorID).Set(float64(count))
+}
+
+func (m *actorMetrics) SchedulerQueueDepth(actorID string, depth int) {
+	m.schedulerQueueDepth.WithLabelValues(actorID).Set(float64(depth))
 }
 
 func (m *actorMetrics) SchedulerTaskDuration() metrics.Timer {

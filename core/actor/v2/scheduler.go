@@ -22,8 +22,18 @@ type scheduler struct {
 	ctx      context.Context
 	log      *slog.Logger
 	inflight atomic.Int32
-	sem      chan struct{}
 	max      int
+
+	// mu guards queue and workers. Tasks wait in queue as plain function
+	// values; at most max worker goroutines drain it. This bounds goroutines
+	// by max regardless of backlog size — a queued task costs heap, never a
+	// goroutine stack. The previous design (spawn a goroutine per Schedule,
+	// park it on a semaphore) grew the process by one stack per pending task,
+	// which OOMKilled long-running low-memory deployments under a slow drain
+	// (DEV-726).
+	mu      sync.Mutex
+	queue   []scheduleFunc
+	workers int
 
 	wg sync.WaitGroup
 
@@ -57,27 +67,58 @@ func (s *scheduler) Schedule(f scheduleFunc) {
 		return
 	}
 
-	// Bounded by semaphore
-	go func() {
-		defer s.wg.Done()
+	// Bounded: enqueue the task and make sure a worker exists to drain it.
+	s.mu.Lock()
+	s.queue = append(s.queue, f)
+	depth := len(s.queue)
+	if s.workers < s.max {
+		s.workers++
+		go s.worker()
+	}
+	s.mu.Unlock()
 
-		// Wait for semaphore or context cancellation
-		select {
-		case <-s.ctx.Done():
+	s.metrics.SchedulerQueueDepth(s.actorID, depth)
+}
+
+// worker drains the task queue and exits as soon as the queue is empty; a
+// later Schedule starts a fresh worker. The worker count stays bounded by max
+// under mu: a concurrent Schedule either lands its task before the
+// empty-check (this worker keeps running) or after the decrement (Schedule
+// sees a free slot and spawns a new worker).
+func (s *scheduler) worker() {
+	for {
+		s.mu.Lock()
+		if len(s.queue) == 0 {
+			s.workers--
+			s.mu.Unlock()
 			return
-		case s.sem <- struct{}{}:
+		}
+		f := s.queue[0]
+		s.queue[0] = nil // release the task for GC
+		s.queue = s.queue[1:]
+		depth := len(s.queue)
+		if depth == 0 {
+			s.queue = nil // release the backing array
+		}
+		s.mu.Unlock()
+
+		s.metrics.SchedulerQueueDepth(s.actorID, depth)
+
+		// On shutdown, drop queued tasks without running them (same contract
+		// as before: a task still waiting for a slot at cancellation never
+		// runs), but keep draining so Wait() unblocks.
+		if s.ctx.Err() != nil {
+			s.wg.Done()
+			continue
 		}
 
 		count := s.inflight.Add(1)
 		s.metrics.SchedulerInflight(s.actorID, int(count))
-		defer func() {
-			<-s.sem
-			count := s.inflight.Add(-1)
-			s.metrics.SchedulerInflight(s.actorID, int(count))
-		}()
-
 		s.runTask(f)
-	}()
+		count = s.inflight.Add(-1)
+		s.metrics.SchedulerInflight(s.actorID, int(count))
+		s.wg.Done()
+	}
 }
 
 func (s *scheduler) runTask(f scheduleFunc) {
@@ -110,16 +151,11 @@ func NewScheduler(max int, ctx context.Context) Scheduler {
 
 // NewSchedulerWithMetrics creates a scheduler with metrics support.
 func NewSchedulerWithMetrics(max int, ctx context.Context, actorID string, metrics ActorMetrics) Scheduler {
-	var sem chan struct{}
-	if max > 0 {
-		sem = make(chan struct{}, max)
-	}
 	if metrics == nil {
 		metrics = NopActorMetrics()
 	}
 	return &scheduler{
 		ctx:     ctx,
-		sem:     sem,
 		max:     max,
 		log:     slog.Default(),
 		actorID: actorID,

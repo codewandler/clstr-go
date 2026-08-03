@@ -98,6 +98,7 @@ func TestNewActorMetrics(t *testing.T) {
 
 	// Test scheduler
 	m.SchedulerInflight("actor-123", 5)
+	m.SchedulerQueueDepth("actor-123", 7)
 
 	timer = m.SchedulerTaskDuration()
 	assert.NotNil(t, timer)
@@ -119,6 +120,7 @@ func TestNewActorMetrics(t *testing.T) {
 	assert.True(t, names["clstr_actor_message_duration_seconds"])
 	assert.True(t, names["clstr_actor_messages_total"])
 	assert.True(t, names["clstr_actor_mailbox_depth"])
+	assert.True(t, names["clstr_actor_scheduler_queue_depth"])
 }
 
 func TestNewClusterMetrics(t *testing.T) {
