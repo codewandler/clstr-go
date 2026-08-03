@@ -101,6 +101,14 @@ type EventStore struct {
 	streamMu sync.Mutex
 }
 
+// aggregateLoadConsumerInactiveThreshold bounds how long the one-shot ordered
+// consumer created by Load remains registered after its iterator stops. The
+// nats.go default is five minutes, which lets thousands of inactive consumers
+// accumulate under aggregate-heavy workloads and overload the JetStream
+// consumer metadata path. Active loads continue issuing pulls, so this only
+// applies once a load becomes idle.
+const aggregateLoadConsumerInactiveThreshold = 5 * time.Second
+
 func NewEventStore(cfg EventStoreConfig) (*EventStore, error) {
 	if cfg.MaxAge == 0 && cfg.MaxBytes == 0 && cfg.MaxMsgs == 0 {
 		return nil, errors.New("at least one retention limit must be set (MaxAge, MaxBytes, or MaxMsgs)")
@@ -522,8 +530,9 @@ func (e *EventStore) Load(
 
 	// consume
 	consumerCfg := jetstream.OrderedConsumerConfig{
-		DeliverPolicy:  jetstream.DeliverAllPolicy,
-		FilterSubjects: []string{subj},
+		DeliverPolicy:     jetstream.DeliverAllPolicy,
+		FilterSubjects:    []string{subj},
+		InactiveThreshold: aggregateLoadConsumerInactiveThreshold,
 	}
 	if startSeq > 0 {
 		consumerCfg.DeliverPolicy = jetstream.DeliverByStartSequencePolicy

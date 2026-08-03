@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.35.1] — 2026-08-03
+
+### Fixed
+
+- **NATS EventStore: one-shot aggregate loads retained ordered consumers for five minutes.**
+  `EventStore.Load` now gives its ordered consumer a five-second inactive
+  threshold. The previous nats.go default allowed thousands of already-idle
+  consumers to accumulate under aggregate-heavy workloads, overwhelming the
+  JetStream consumer metadata path and causing load, append, and subscription
+  timeouts. Active loads are unaffected; the threshold starts after their pull
+  activity stops. (DEV-726)
+
 ## [v0.35.0] — 2026-08-03
 
 ### Fixed
