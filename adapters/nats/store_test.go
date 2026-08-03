@@ -679,6 +679,41 @@ func TestStore_Load_NoTimeoutDelay(t *testing.T) {
 	t.Logf("Load of %d events took %s", N, elapsed)
 }
 
+// TestStore_Load_ReapsOrderedConsumerPromptly verifies that one-shot aggregate
+// loads do not leave the ordered consumer behind for the nats.go default five
+// minutes. At production load rates that lifetime allows thousands of inactive
+// consumers to accumulate and overload JetStream's consumer metadata path.
+func TestStore_Load_ReapsOrderedConsumerPromptly(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+
+	_, err := store.Append(ctx, "test", "short-lived-load", 0, []es.Envelope{{
+		ID:            gonanoid.Must(),
+		OccurredAt:    time.Now(),
+		AggregateType: "test",
+		AggregateID:   "short-lived-load",
+		Type:          "evt",
+		Version:       1,
+	}})
+	require.NoError(t, err)
+
+	loaded, err := store.Load(ctx, "test", "short-lived-load")
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+
+	require.Eventually(t, func() bool {
+		consumers := store.stream.ConsumerNames(ctx)
+		if consumers.Err() != nil {
+			return false
+		}
+		for range consumers.Name() {
+			return false
+		}
+		return true
+	}, 8*time.Second, 100*time.Millisecond,
+		"one-shot Load consumer should expire promptly")
+}
+
 // TestStore_Load_ContextCancellation verifies that when the caller's context is
 // cancelled during Load, the operation returns promptly with the context error
 // rather than blocking on message iteration.
