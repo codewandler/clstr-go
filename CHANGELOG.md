@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.35.0] — 2026-08-03
+
+### Fixed
+
+- **actor/v2: unbounded scheduler backlog — one parked goroutine per queued task.**
+  `Scheduler.Schedule` spawned the task goroutine first and then parked it on
+  the concurrency semaphore, so the semaphore bounded *execution* while the
+  *backlog* grew the process by one goroutine stack per pending task. Under a
+  slow drain this OOMKilled long-running low-memory deployments while the Go
+  heap stayed flat (goroutine stacks are not heap). Tasks now wait in a plain
+  FIFO drained by at most `max` worker goroutines: a queued task costs heap,
+  never a stack. `Schedule` remains non-blocking and `Wait()`/cancellation
+  semantics are unchanged (tasks still queued at cancellation are dropped).
+  (DEV-726)
+- **es: failed Save left applied-but-unpersisted state in the aggregate cache.**
+  `typedRepo.WithTransaction` mutates the LRU-cached aggregate in place
+  (`RaiseAndApply` applies events before `Save` persists them). When the store
+  append failed, nothing rolled the cached instance back, so it stayed ahead
+  of the store — with stale uncommitted events attached — for its whole cached
+  lifetime, poisoning every later transaction on that aggregate. A failed
+  transaction or `Save` now evicts the aggregate from the cache so the next
+  load replays the persisted truth. (DEV-726)
+
+### Added
+
+- **actor/v2: `SchedulerQueueDepth` metric** (`clstr_actor_scheduler_queue_depth`
+  in the prometheus adapter): number of scheduled tasks waiting for an execution
+  slot. `SchedulerInflight` saturating at its cap is indistinguishable from a
+  healthy busy scheduler; a growing queue depth is the overload signal. Note:
+  the `ActorMetrics` interface gains a method — custom implementations must add
+  `SchedulerQueueDepth(actorID string, depth int)`.
+
+## [v0.34.0] — 2026-06-24
+
+### Added
+
+- **es: frequency-gated aggregate snapshots + single-SET snapshotter.**
+  `WithSnapshotEvery(n)` snapshots an aggregate once it has accumulated at
+  least n events since its last snapshot; the Redis snapshotter writes with a
+  single SET.
+
 ## [v0.33.1] — 2026-06-11
 
 ### Fixed
