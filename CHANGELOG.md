@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **es / NATS EventStore: an aggregate whose stored events were all trimmed
+  could never be saved again.** With stream retention limits (`MaxAge`,
+  `MaxBytes`, `MaxMsgs`) and snapshots kept outside the stream, a rarely
+  changed aggregate loads from its snapshot at version N while its subject
+  holds no events; every save then failed with `concurrency conflict:
+  expected version N, got 0`. `Append` now accepts the write as version N+1
+  when the caller's last known sequence is below the stream's first sequence,
+  and keeps publishing with expected-last-subject-sequence 0, so concurrent
+  writers still conflict. The repository passes the sequence on every save.
+  The same applies to an aggregate held in memory whose events were trimmed
+  before its next save.
+
+### Added
+
+- **es: `ErrHistoryTrimmed` and `ErrVersionMismatch`.** `Repository.Load` used
+  to fail with a plain `expect version X, got Y` for every version gap. The
+  NATS store now returns an error wrapping `ErrHistoryTrimmed` when the events
+  between the snapshot (or the start, without one) and the first stored event
+  were removed by retention; any other gap wraps `ErrVersionMismatch`. Both
+  messages keep the `expect version X, got Y` text.
+- **es: `StoreAppendOption`, `WithLastKnownSeq`, `NewStoreAppendOptions`.**
+
+### Changed
+
+- **es: `EventStore.Append` takes `opts ...StoreAppendOption`.** Callers are
+  unaffected. Custom `EventStore` implementations and wrappers must add the
+  parameter, and wrappers must pass it through, or the trimmed-history
+  continuation above does not reach the inner store.
+
+## [v0.35.1] — 2026-08-03
+
+### Fixed
+
+- **NATS EventStore: one-shot aggregate loads retained ordered consumers for five minutes.**
+  `EventStore.Load` now gives its ordered consumer a five-second inactive
+  threshold. The previous nats.go default allowed thousands of already-idle
+  consumers to accumulate under aggregate-heavy workloads, overwhelming the
+  JetStream consumer metadata path and causing load, append, and subscription
+  timeouts. Active loads are unaffected; the threshold starts after their pull
+  activity stops. (DEV-726)
+
 ## [v0.35.0] — 2026-08-03
 
 ### Fixed
