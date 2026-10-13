@@ -184,7 +184,7 @@ type EventStore interface {
 
     Load(ctx context.Context, aggType, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
     Append(ctx context.Context, aggType, aggID string, expectedVersion Version,
-           events []Envelope) (*StoreAppendResult, error)
+           events []Envelope, opts ...StoreAppendOption) (*StoreAppendResult, error)
 }
 ```
 
@@ -194,9 +194,34 @@ es.WithStartAtVersion(es.Version(5))  // Events >= version 5
 es.WithStartSeq(1000)                 // Events >= sequence 1000
 ```
 
+**Append Options:**
+```go
+es.WithLastKnownSeq(1000)  // Stream sequence the caller's state reflects (the repository sets it)
+```
+
 **Concurrency Guarantee:**
 - `Append()` returns `ErrConcurrencyConflict` if `expectedVersion` doesn't match
 - Enables optimistic locking without explicit locks
+
+**Trimmed history:**
+
+A stream with retention limits (`MaxAge`, `MaxBytes`, `MaxMsgs`) drops its
+oldest events, while snapshots live elsewhere. An aggregate that changes
+rarely can end up with a snapshot older than the stream's first event. The
+NATS store handles the two states this produces:
+
+- *No stored events left.* The aggregate loads from its snapshot. `Append()`
+  with `expectedVersion > 0` accepts the next events as its continuation when
+  `WithLastKnownSeq` is below the stream's first sequence, and still publishes
+  with expected-last-subject-sequence 0, so a concurrent writer gets
+  `ErrConcurrencyConflict`. Without that proof (no sequence given, or the
+  sequence is still inside the retained range) it stays a conflict.
+- *Events after the snapshot partly trimmed*, or the first events of an
+  aggregate without a snapshot. `Load()` fails with an error wrapping
+  `ErrHistoryTrimmed`; the state in between is gone. A version gap that
+  trimming does not explain fails with `ErrVersionMismatch`.
+
+Store wrappers that implement `Append()` must pass `opts` through.
 
 ## Repository
 
@@ -580,6 +605,8 @@ If no metrics are provided, a no-op implementation is used (zero overhead).
 ```go
 es.ErrAggregateNotFound       // Aggregate doesn't exist
 es.ErrConcurrencyConflict     // Version mismatch on save
+es.ErrHistoryTrimmed          // Load: events the aggregate needs were removed by stream retention
+es.ErrVersionMismatch         // Load: stored versions skip and trimming does not explain it
 es.ErrUnknownEventType        // Event type not registered
 es.ErrStoreNoEvents           // No events to store
 es.ErrSnapshotterUnconfigured // Snapshotter not set

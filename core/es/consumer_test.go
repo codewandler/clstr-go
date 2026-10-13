@@ -85,7 +85,7 @@ func (m *mockStore) lastSubscribeOpts() es.SubscribeOpts {
 func (m *mockStore) Load(_ context.Context, _, _ string, _ ...es.StoreLoadOption) ([]es.Envelope, error) {
 	return nil, nil
 }
-func (m *mockStore) Append(_ context.Context, _, _ string, _ es.Version, _ []es.Envelope) (*es.StoreAppendResult, error) {
+func (m *mockStore) Append(_ context.Context, _, _ string, _ es.Version, _ []es.Envelope, _ ...es.StoreAppendOption) (*es.StoreAppendResult, error) {
 	return nil, nil
 }
 

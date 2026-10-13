@@ -22,11 +22,11 @@ type flakyStore struct {
 
 var errTransientAppend = errors.New("transient append failure")
 
-func (s *flakyStore) Append(ctx context.Context, aggType string, aggID string, expectedVersion es.Version, events []es.Envelope) (*es.StoreAppendResult, error) {
+func (s *flakyStore) Append(ctx context.Context, aggType string, aggID string, expectedVersion es.Version, events []es.Envelope, opts ...es.StoreAppendOption) (*es.StoreAppendResult, error) {
 	if s.failNext.CompareAndSwap(true, false) {
 		return nil, errTransientAppend
 	}
-	return s.EventStore.Append(ctx, aggType, aggID, expectedVersion, events)
+	return s.EventStore.Append(ctx, aggType, aggID, expectedVersion, events, opts...)
 }
 
 // A transaction mutates the LRU-cached aggregate in place before Save; a
