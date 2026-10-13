@@ -546,7 +546,58 @@ func (e *EventStore) Load(
 	if err != nil {
 		return nil, err
 	}
+	if err = e.checkTrimmedStart(ctx, aggType, aggID, loadOpts, loadedEvents); err != nil {
+		return nil, err
+	}
 	return loadedEvents, nil
+}
+
+// checkTrimmedStart returns an error wrapping es.ErrHistoryTrimmed when the
+// first loaded event skips past the requested start version and the skipped
+// events lay below the stream's first sequence.
+//
+// The skipped versions were stored at sequences in [from, loaded[0].Seq). None
+// of them is at or above the stream's first sequence, because loaded[0] is the
+// first stored event of the subject at or after from. So if the first sequence
+// is above from, retention trimmed them. If it is not, nothing in that range
+// was trimmed and the gap is left to the caller to report as a version
+// mismatch. Covers trimming by age, size and count, which remove the oldest
+// messages; an individually deleted message inside the trimmed range cannot be
+// told apart from a trimmed one.
+func (e *EventStore) checkTrimmedStart(
+	ctx context.Context,
+	aggType, aggID string,
+	opts *storeLoadOptions,
+	loaded []es.Envelope,
+) error {
+	if opts.startVersion == 0 || len(loaded) == 0 || loaded[0].Version <= opts.startVersion {
+		return nil
+	}
+	from := max(opts.startSeq, 1)
+	firstSeq, trimmed, err := e.trimmedPast(ctx, from)
+	if err != nil || !trimmed {
+		return err
+	}
+	return fmt.Errorf(
+		"%w: expect version %d, got %d; stream sequences %d to %d were trimmed (agg_type=%s agg_id=%s)",
+		es.ErrHistoryTrimmed, opts.startVersion, loaded[0].Version, from, firstSeq-1, aggType, aggID,
+	)
+}
+
+// trimmedPast reports whether the stream's retention limits have removed the
+// message at seq: the stream's first sequence is above it. Zero means unknown
+// and is never reported as trimmed.
+func (e *EventStore) trimmedPast(ctx context.Context, seq uint64) (firstSeq uint64, trimmed bool, err error) {
+	if seq == 0 {
+		return 0, false, nil
+	}
+	e.streamMu.Lock()
+	info, err := e.stream.Info(ctx)
+	e.streamMu.Unlock()
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get stream info: %w", err)
+	}
+	return info.State.FirstSeq, info.State.FirstSeq > seq, nil
 }
 
 func (e *EventStore) consumeEvents(
@@ -596,6 +647,7 @@ func (e *EventStore) Append(
 	aggID string,
 	expectedVersion es.Version,
 	events []es.Envelope,
+	opts ...es.StoreAppendOption,
 ) (res *es.StoreAppendResult, err error) {
 
 	if len(events) == 0 {
@@ -608,6 +660,8 @@ func (e *EventStore) Append(
 		return nil, errors.New("aggregate id is empty")
 	}
 
+	appendOpts := es.NewStoreAppendOptions(opts...)
+
 	// Determine the expected last subject sequence for atomic CAS.
 	// JetStream's WithExpectLastSequencePerSubject rejects the publish
 	// server-side if another message was appended since we read, closing
@@ -619,18 +673,37 @@ func (e *EventStore) Append(
 			return nil, fmt.Errorf("failed to get last event: %w", getErr)
 		}
 		if lm == nil {
-			return nil, fmt.Errorf(
-				"%w: expected version %d, got 0 (agg_type=%s agg_id=%s)",
-				es.ErrConcurrencyConflict, expectedVersion, aggType, aggID,
+			// The aggregate has no stored events. Accept the write only when
+			// the caller's state sits on history the stream's retention limits
+			// trimmed: its last known sequence is below the stream's first
+			// sequence. expectedLastSubjSeq stays 0, so JetStream still rejects
+			// the publish if any event reached the subject after the read above.
+			firstSeq, trimmed, trimErr := e.trimmedPast(ctx, appendOpts.LastKnownSeq)
+			if trimErr != nil {
+				return nil, trimErr
+			}
+			if !trimmed {
+				return nil, fmt.Errorf(
+					"%w: expected version %d, got 0 (agg_type=%s agg_id=%s)",
+					es.ErrConcurrencyConflict, expectedVersion, aggType, aggID,
+				)
+			}
+			e.log.Info(
+				"continuing aggregate whose stored events were trimmed",
+				slog.Group("agg", slog.String("type", aggType), slog.String("id", aggID)),
+				expectedVersion.SlogAttrWithKey("expected_version"),
+				slog.Uint64("last_known_seq", appendOpts.LastKnownSeq),
+				slog.Uint64("stream_first_seq", firstSeq),
 			)
+		} else {
+			if lm.Version != expectedVersion {
+				return nil, fmt.Errorf(
+					"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
+					es.ErrConcurrencyConflict, expectedVersion, lm.Version, aggType, aggID,
+				)
+			}
+			expectedLastSubjSeq = lm.Seq
 		}
-		if lm.Version != expectedVersion {
-			return nil, fmt.Errorf(
-				"%w: expected version %d, got %d (agg_type=%s agg_id=%s)",
-				es.ErrConcurrencyConflict, expectedVersion, lm.Version, aggType, aggID,
-			)
-		}
-		expectedLastSubjSeq = lm.Seq
 	}
 	// else: expectedVersion == 0 → new aggregate, expectedLastSubjSeq stays 0
 	// which tells JetStream the subject must have no prior messages.

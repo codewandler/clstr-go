@@ -99,7 +99,8 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 		minSeq     = agg.GetSeq() + 1
 	)
 
-	// load all events
+	// load all events. A store that trims old events returns an error
+	// wrapping ErrHistoryTrimmed when the first of them is gone.
 	loaded, err := r.store.Load(
 		ctx,
 		aggType,
@@ -116,7 +117,10 @@ func (r *repository) Load(ctx context.Context, agg Aggregate, opts ...LoadOption
 
 		expectVersion := agg.GetVersion() + 1
 		if e.Version != expectVersion {
-			return fmt.Errorf("expect version %d, got %d", expectVersion, e.Version)
+			return fmt.Errorf(
+				"%w: expect version %d, got %d (agg_type=%s agg_id=%s)",
+				ErrVersionMismatch, expectVersion, e.Version, aggType, aggID,
+			)
 		}
 
 		evt, err := r.registry.Decode(e)
@@ -192,13 +196,16 @@ func (r *repository) Save(ctx context.Context, agg Aggregate, saveOpts ...SaveOp
 		newEnvs = append(newEnvs, env)
 	}
 
-	// append to store
+	// append to store. The last known sequence lets a trimming store accept
+	// the first write after every stored event of the aggregate was trimmed
+	// (state restored from a snapshot, or held in a cache).
 	if res, err := r.store.Append(
 		ctx,
 		aggType,
 		aggID,
 		expectVersion,
 		newEnvs,
+		WithLastKnownSeq(agg.GetSeq()),
 	); err != nil {
 		if errors.Is(err, ErrConcurrencyConflict) {
 			r.metrics.ConcurrencyConflict(aggType)

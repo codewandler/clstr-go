@@ -48,6 +48,39 @@ func (o StartSeqOption) ApplyToStoreLoadOptions(receiver storeLoadOptionsReceive
 }
 
 type (
+	// StoreAppendOptions holds the optional arguments of EventStore.Append.
+	StoreAppendOptions struct {
+		// LastKnownSeq is the global stream sequence the caller's state of the
+		// aggregate reflects: the sequence of its last loaded event, or of the
+		// snapshot it was restored from when no later event was loaded.
+		// Zero means unknown.
+		LastKnownSeq uint64
+	}
+
+	// StoreAppendOption configures a single EventStore.Append call.
+	StoreAppendOption func(*StoreAppendOptions)
+)
+
+// WithLastKnownSeq tells Append which stream sequence the caller's state of the
+// aggregate reflects. A store whose stream trims old events uses it to accept
+// the first append after every stored event of the aggregate was trimmed; see
+// EventStore.Append.
+func WithLastKnownSeq(seq uint64) StoreAppendOption {
+	return func(o *StoreAppendOptions) { o.LastKnownSeq = seq }
+}
+
+// NewStoreAppendOptions applies opts to a zero StoreAppendOptions.
+func NewStoreAppendOptions(opts ...StoreAppendOption) StoreAppendOptions {
+	var o StoreAppendOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o
+}
+
+type (
 	// StoreAppendResult contains the result of appending events to the store.
 	StoreAppendResult struct {
 		// LastSeq is the global sequence number assigned to the last appended event.
@@ -68,11 +101,24 @@ type (
 
 		// Load retrieves events for a specific aggregate stream.
 		// Events are returned in version order. Use opts to filter by version/sequence.
+		//
+		// When WithStartAtVersion is given and the first stored event at or
+		// after the start sequence has a higher version because the stream's
+		// retention limits trimmed the events in between, a store that can
+		// tell returns an error wrapping ErrHistoryTrimmed.
 		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
 
 		// Append persists events to an aggregate stream with optimistic concurrency.
 		// Returns ErrConcurrencyConflict if expectedVersion doesn't match the current version.
-		Append(ctx context.Context, aggType string, aggID string, expectedVersion Version, events []Envelope) (*StoreAppendResult, error)
+		//
+		// One exception, for stores whose stream trims old events: when the
+		// aggregate has no stored events left, expectedVersion > 0, and
+		// WithLastKnownSeq names a sequence below the stream's first sequence
+		// (the caller's state was restored from a snapshot whose events were
+		// all trimmed), the store accepts the events as the continuation of
+		// expectedVersion, provided the aggregate still has no stored events
+		// at the moment of the write.
+		Append(ctx context.Context, aggType string, aggID string, expectedVersion Version, events []Envelope, opts ...StoreAppendOption) (*StoreAppendResult, error)
 	}
 )
 

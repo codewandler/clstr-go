@@ -12,6 +12,18 @@ var (
 	ErrAggregateNotFound   = errors.New("aggregate not found")
 	ErrConcurrencyConflict = errors.New("concurrency conflict")
 	ErrUnknownEventType    = errors.New("unknown event type")
+
+	// ErrHistoryTrimmed reports that events an aggregate needs in order to
+	// load are gone because the stream's retention limits (age, size or
+	// count) removed them: the events between its snapshot and the first
+	// event still stored, or, without a snapshot, its first events. The
+	// aggregate cannot be rebuilt from the store alone.
+	ErrHistoryTrimmed = errors.New("aggregate history trimmed")
+
+	// ErrVersionMismatch reports that the stored events of an aggregate do not
+	// continue its version sequence and trimming does not explain the gap:
+	// the stored history or the snapshot is inconsistent.
+	ErrVersionMismatch = errors.New("aggregate version mismatch")
 )
 
 type (

@@ -144,6 +144,7 @@ func (s *InMemoryStore) Append(
 	aggID string,
 	expectVersion Version,
 	events []Envelope,
+	_ ...StoreAppendOption, // the in-memory store never trims, so it has no use for them
 ) (*StoreAppendResult, error) {
 	if len(events) == 0 {
 		return nil, ErrStoreNoEvents
