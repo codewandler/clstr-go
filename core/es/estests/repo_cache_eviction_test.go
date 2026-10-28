@@ -103,3 +103,57 @@ func TestSave_FailureEvictsCache(t *testing.T) {
 	require.EqualValues(t, 0, loaded.Count(),
 		"failed Save left a dirty aggregate reachable through the cache")
 }
+
+// optsDroppingStore is a wrapper that does not pass the Append options on.
+type optsDroppingStore struct{ es.EventStore }
+
+func (s *optsDroppingStore) Append(ctx context.Context, aggType string, aggID string, expectedVersion es.Version, events []es.Envelope, _ ...es.StoreAppendOption) (*es.StoreAppendResult, error) {
+	return s.EventStore.Append(ctx, aggType, aggID, expectedVersion, events)
+}
+
+// A cached aggregate whose stored events were trimmed saves through a store
+// wrapper only if the wrapper passes the Append options on; one that drops
+// them turns every such save into a conflict.
+func TestWithTransaction_CachedAggregateAfterTrim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		wrap    func(es.EventStore) es.EventStore
+		wantErr error
+	}{
+		{"wrapper passes options on", func(s es.EventStore) es.EventStore { return &flakyStore{EventStore: s} }, nil},
+		{"wrapper drops options", func(s es.EventStore) es.EventStore { return &optsDroppingStore{EventStore: s} }, es.ErrConcurrencyConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := es.NewInMemoryStore()
+			env := es.NewEnv(
+				es.WithSnapshotter(es.NewInMemorySnapshotter()),
+				es.WithStore(tc.wrap(inner)),
+				es.WithAggregates(new(domain.TestAgg)),
+			)
+			require.NoError(t, env.Start())
+			repo := es.NewTypedRepositoryFrom[*domain.TestAgg](slog.Default(), env.Repository(), es.WithRepoCacheLRU(100))
+
+			_, err := repo.Create(t.Context(), "agg-3") // v1, seq 1, cached
+			require.NoError(t, err)
+			require.NoError(t, repo.WithTransaction(t.Context(), "agg-3", func(a *domain.TestAgg) error {
+				return a.IncBy(1) // v2, seq 2
+			}))
+			_, err = repo.Create(t.Context(), "filler") // seq 3
+			require.NoError(t, err)
+			inner.TrimBefore(3)
+
+			err = repo.WithTransaction(t.Context(), "agg-3", func(a *domain.TestAgg) error {
+				return a.IncBy(1)
+			})
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			loaded, err := repo.GetByID(t.Context(), "agg-3")
+			require.NoError(t, err)
+			require.Equal(t, es.Version(3), loaded.GetVersion())
+			require.EqualValues(t, 2, loaded.Count())
+		})
+	}
+}
