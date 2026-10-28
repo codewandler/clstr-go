@@ -26,6 +26,37 @@ var (
 	ErrVersionMismatch = errors.New("aggregate version mismatch")
 )
 
+// HistoryTrimmedError is the error a store's Load returns when the events an
+// aggregate needs were removed by the stream's retention limits. It wraps
+// ErrHistoryTrimmed, so errors.Is(err, ErrHistoryTrimmed) holds; use
+// errors.As to read the details a caller needs to rebuild the aggregate.
+type HistoryTrimmedError struct {
+	AggType string
+	AggID   string
+	// StartVersion is the first version the load needed: one past the
+	// snapshot's version, or 1 without a snapshot.
+	StartVersion Version
+	// StartSeq is the stream sequence the load started from: one past the
+	// snapshot's sequence, or 1 without a snapshot.
+	StartSeq uint64
+	// FirstStoredVersion and FirstStoredSeq identify the aggregate's oldest
+	// event still stored.
+	FirstStoredVersion Version
+	FirstStoredSeq     uint64
+	// StreamFirstSeq is the stream's first sequence when the load ran.
+	// Sequences StartSeq to StreamFirstSeq-1 were trimmed.
+	StreamFirstSeq uint64
+}
+
+func (e *HistoryTrimmedError) Error() string {
+	return fmt.Sprintf(
+		"%s: expect version %d, got %d; stream sequences %d to %d were trimmed (agg_type=%s agg_id=%s)",
+		ErrHistoryTrimmed, e.StartVersion, e.FirstStoredVersion, e.StartSeq, e.StreamFirstSeq-1, e.AggType, e.AggID,
+	)
+}
+
+func (e *HistoryTrimmedError) Unwrap() error { return ErrHistoryTrimmed }
+
 type (
 	// AggregateDeleted is an event that marks an aggregate as deleted.
 	// Use this as a soft-delete marker that can be detected by projections.
