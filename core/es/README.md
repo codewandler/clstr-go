@@ -217,11 +217,35 @@ NATS store handles the two states this produces:
   `ErrConcurrencyConflict`. Without that proof (no sequence given, or the
   sequence is still inside the retained range) it stays a conflict.
 - *Events after the snapshot partly trimmed*, or the first events of an
-  aggregate without a snapshot. `Load()` fails with an error wrapping
-  `ErrHistoryTrimmed`; the state in between is gone. A version gap that
-  trimming does not explain fails with `ErrVersionMismatch`.
+  aggregate without a snapshot. `Load()` fails with a `*HistoryTrimmedError`
+  (it wraps `ErrHistoryTrimmed`); the state in between is gone. A version gap
+  that trimming does not explain fails with `ErrVersionMismatch`.
 
-Store wrappers that implement `Append()` must pass `opts` through.
+```go
+var trimmed *es.HistoryTrimmedError
+if errors.As(err, &trimmed) {
+    // trimmed.AggType, trimmed.AggID: which aggregate to rebuild
+    // trimmed.StartVersion, trimmed.StartSeq: where the load started
+    // trimmed.FirstStoredVersion, trimmed.FirstStoredSeq: oldest event still stored
+    // trimmed.StreamFirstSeq: the stream's first sequence at load time
+}
+```
+
+**Store wrappers must forward the Append options.** A decorator around an
+`EventStore` (metrics, tracing, fault injection) that implements `Append()`
+must pass `opts...` to the inner store. One that drops them compiles, but
+turns every save of a snapshot-only aggregate into `ErrConcurrencyConflict`.
+
+`InMemoryStore.TrimBefore(seq)` drops every event below `seq`, as a retention
+limit does, so tests can build both states without a JetStream server.
+
+Limits: an aggregate whose events were all trimmed and that has no snapshot
+loads as `ErrAggregateNotFound`; nothing is left to tell it from one that never
+existed. A writer holding state across a trim that removed every event of the
+aggregate, including ones another writer appended after that state, can still
+continue it: the store has no record left to compare against. Load from the
+snapshot before writing to an aggregate that may have been idle past the
+retention window.
 
 ## Repository
 
