@@ -552,7 +552,7 @@ func (e *EventStore) Load(
 	return loadedEvents, nil
 }
 
-// checkTrimmedStart returns an error wrapping es.ErrHistoryTrimmed when the
+// checkTrimmedStart returns an *es.HistoryTrimmedError when the
 // first loaded event skips past the requested start version and the skipped
 // events lay below the stream's first sequence.
 //
@@ -578,10 +578,15 @@ func (e *EventStore) checkTrimmedStart(
 	if err != nil || !trimmed {
 		return err
 	}
-	return fmt.Errorf(
-		"%w: expect version %d, got %d; stream sequences %d to %d were trimmed (agg_type=%s agg_id=%s)",
-		es.ErrHistoryTrimmed, opts.startVersion, loaded[0].Version, from, firstSeq-1, aggType, aggID,
-	)
+	return &es.HistoryTrimmedError{
+		AggType:            aggType,
+		AggID:              aggID,
+		StartVersion:       opts.startVersion,
+		StartSeq:           from,
+		FirstStoredVersion: loaded[0].Version,
+		FirstStoredSeq:     loaded[0].Seq,
+		StreamFirstSeq:     firstSeq,
+	}
 }
 
 // trimmedPast reports whether the stream's retention limits have removed the

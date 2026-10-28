@@ -105,7 +105,7 @@ type (
 		// When WithStartAtVersion is given and the first stored event at or
 		// after the start sequence has a higher version because the stream's
 		// retention limits trimmed the events in between, a store that can
-		// tell returns an error wrapping ErrHistoryTrimmed.
+		// tell returns a *HistoryTrimmedError, which wraps ErrHistoryTrimmed.
 		Load(ctx context.Context, aggType string, aggID string, opts ...StoreLoadOption) ([]Envelope, error)
 
 		// Append persists events to an aggregate stream with optimistic concurrency.
