@@ -18,6 +18,42 @@ type InMemoryStore struct {
 	seq     atomic.Uint64
 	streams map[string][]Envelope
 	subs    map[string]*inMemorySubscription
+
+	// firstSeq is the lowest sequence TrimBefore kept; 0 until it is called.
+	firstSeq uint64
+}
+
+// TrimBefore removes every event whose sequence is below seq, the way a
+// stream's retention limits (age, size or count) drop its oldest messages.
+// It lets tests reproduce an aggregate whose snapshot outlived its events:
+// afterwards Load and Append behave as the NATS store does on a trimmed
+// stream. Events appended later get sequences at or above seq.
+func (s *InMemoryStore) TrimBefore(seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if seq <= s.firstSeq {
+		return
+	}
+	s.firstSeq = seq
+	for k, events := range s.streams {
+		kept := make([]Envelope, 0, len(events))
+		for _, e := range events {
+			if e.Seq >= seq {
+				kept = append(kept, e)
+			}
+		}
+		s.streams[k] = kept
+	}
+	if s.seq.Load() < seq-1 {
+		s.seq.Store(seq - 1)
+	}
+}
+
+// trimmedPast reports whether TrimBefore removed the event at seq. Zero means
+// unknown and is never reported as trimmed. Callers hold s.mu.
+func (s *InMemoryStore) trimmedPast(seq uint64) bool {
+	return seq > 0 && s.firstSeq > seq
 }
 
 func (s *InMemoryStore) Subscribe(ctx context.Context, opts ...SubscribeOption) (Subscription, error) {
@@ -135,6 +171,23 @@ func (s *InMemoryStore) Load(
 		out = append(out, e)
 	}
 
+	// The first event skips past the requested start version and the
+	// skipped events were trimmed: report it as the NATS store does.
+	if loadOpts.startVersion > 0 && len(out) > 0 && out[0].Version > loadOpts.startVersion {
+		from := max(loadOpts.startSeq, 1)
+		if s.trimmedPast(from) {
+			return nil, &HistoryTrimmedError{
+				AggType:            aggType,
+				AggID:              aggID,
+				StartVersion:       loadOpts.startVersion,
+				StartSeq:           from,
+				FirstStoredVersion: out[0].Version,
+				FirstStoredSeq:     out[0].Seq,
+				StreamFirstSeq:     s.firstSeq,
+			}
+		}
+	}
+
 	return out, nil
 }
 
@@ -144,11 +197,12 @@ func (s *InMemoryStore) Append(
 	aggID string,
 	expectVersion Version,
 	events []Envelope,
-	_ ...StoreAppendOption, // the in-memory store never trims, so it has no use for them
+	opts ...StoreAppendOption,
 ) (*StoreAppendResult, error) {
 	if len(events) == 0 {
 		return nil, ErrStoreNoEvents
 	}
+	appendOpts := NewStoreAppendOptions(opts...)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,7 +216,11 @@ func (s *InMemoryStore) Append(
 	if len(curStream) > 0 {
 		curVersion = curStream[len(curStream)-1].Version
 	}
-	if curVersion != expectVersion {
+	// An aggregate with no stored events continues at expectVersion only when
+	// TrimBefore removed the event the caller's state was built from; see
+	// EventStore.Append. The lock makes the check and the write atomic.
+	trimmedContinuation := len(curStream) == 0 && expectVersion > 0 && s.trimmedPast(appendOpts.LastKnownSeq)
+	if curVersion != expectVersion && !trimmedContinuation {
 		return nil, ErrConcurrencyConflict
 	}
 
