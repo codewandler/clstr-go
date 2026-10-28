@@ -1,6 +1,7 @@
 package estests
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -205,6 +206,66 @@ func TestHistoryTrimmed_NoSnapshotTrimmedStart(t *testing.T) {
 	require.ErrorIs(t, err, es.ErrHistoryTrimmed)
 	require.NotErrorIs(t, err, es.ErrVersionMismatch)
 	require.ErrorContains(t, err, "expect version 1, got 3")
+}
+
+// A caller that rebuilds a trimmed aggregate needs the aggregate, where the
+// load started and what survived, without parsing the message. Nothing in the
+// error may read as transient or as a conflict, or a retry loop would spin.
+func TestHistoryTrimmed_ErrorCarriesRebuildDetail(t *testing.T) {
+	t.Run("gap after the snapshot", func(t *testing.T) {
+		e := newTrimEnv(t, nats.EventStoreConfig{})
+		e.create("a")        // v1, seq 1
+		e.inc("a", 1, true)  // v2, seq 2, snapshot v2 at seq 2
+		e.inc("a", 2, false) // v3, v4 at seq 3, 4
+		e.trimBelow(4)
+
+		_, err := e.loadFromSnapshot("a")
+		requireHistoryTrimmed(t, err, es.HistoryTrimmedError{
+			AggType:            "test_agg",
+			AggID:              "a",
+			StartVersion:       3,
+			StartSeq:           3,
+			FirstStoredVersion: 4,
+			FirstStoredSeq:     4,
+			StreamFirstSeq:     4,
+		})
+	})
+
+	t.Run("no snapshot, trimmed start", func(t *testing.T) {
+		e := newTrimEnv(t, nats.EventStoreConfig{})
+		e.create("a")        // v1, seq 1
+		e.inc("a", 2, false) // v2, v3 at seq 2, 3
+		e.trimBelow(3)
+
+		_, err := e.repo.GetByID(t.Context(), "a")
+		requireHistoryTrimmed(t, err, es.HistoryTrimmedError{
+			AggType:            "test_agg",
+			AggID:              "a",
+			StartVersion:       1,
+			StartSeq:           1,
+			FirstStoredVersion: 3,
+			FirstStoredSeq:     3,
+			StreamFirstSeq:     3,
+		})
+	})
+}
+
+func requireHistoryTrimmed(t *testing.T, err error, want es.HistoryTrimmedError) {
+	t.Helper()
+	require.ErrorIs(t, err, es.ErrHistoryTrimmed)
+	for _, transient := range []error{
+		es.ErrConcurrencyConflict,
+		es.ErrAggregateNotFound,
+		es.ErrVersionMismatch,
+		context.Canceled,
+		context.DeadlineExceeded,
+	} {
+		require.NotErrorIs(t, err, transient)
+	}
+	var got *es.HistoryTrimmedError
+	require.ErrorAs(t, err, &got)
+	require.Equal(t, want, *got)
+	require.ErrorContains(t, err, fmt.Sprintf("expect version %d, got %d", want.StartVersion, want.FirstStoredVersion))
 }
 
 func TestHistoryTrimmed_ConcurrentWriterStillConflicts(t *testing.T) {
