@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [v0.36.0] — 2026-10-28
+
+### Changed
+
+Both entries are **breaking changes**.
+
+- **es: `EventStore.Append` takes `opts ...StoreAppendOption`.** Callers are
+  unaffected. Custom `EventStore` implementations and wrappers no longer
+  compile until they add the parameter, and a wrapper must pass the options
+  through, or the trimmed-history continuation below never reaches the inner
+  store (every such save stays a `concurrency conflict`).
+- **Minimum Go version is 1.26.0** (was 1.25.1). `golang.org/x/crypto` v0.56.0,
+  which fixes GO-2026-6354 and GO-2026-6355, declares `go 1.26.0`.
 
 ### Fixed
 
@@ -17,23 +29,32 @@ All notable changes to this project will be documented in this file.
   writers still conflict. The repository passes the sequence on every save.
   The same applies to an aggregate held in memory whose events were trimmed
   before its next save.
+- **es: a version gap on load was an untyped error.** `Repository.Load`
+  failed with a plain `expect version X, got Y` for every gap, so a caller
+  could not tell trimmed history from a corrupt stream. See the new errors
+  below; both messages keep the `expect version X, got Y` text.
+- **deps: `govulncheck ./...` is clean again.** `golang.org/x/crypto`
+  v0.52.0 → v0.56.0 (GO-2026-6354, GO-2026-6355) and
+  `github.com/moby/go-archive` v0.2.0 → v0.3.0 (GO-2026-6253, test
+  containers only).
 
 ### Added
 
-- **es: `ErrHistoryTrimmed` and `ErrVersionMismatch`.** `Repository.Load` used
-  to fail with a plain `expect version X, got Y` for every version gap. The
-  NATS store now returns an error wrapping `ErrHistoryTrimmed` when the events
-  between the snapshot (or the start, without one) and the first stored event
-  were removed by retention; any other gap wraps `ErrVersionMismatch`. Both
-  messages keep the `expect version X, got Y` text.
-- **es: `StoreAppendOption`, `WithLastKnownSeq`, `NewStoreAppendOptions`.**
-
-### Changed
-
-- **es: `EventStore.Append` takes `opts ...StoreAppendOption`.** Callers are
-  unaffected. Custom `EventStore` implementations and wrappers must add the
-  parameter, and wrappers must pass it through, or the trimmed-history
-  continuation above does not reach the inner store.
+- **es: `ErrHistoryTrimmed` and `HistoryTrimmedError`.** The NATS store's
+  `Load` returns a `*HistoryTrimmedError` when the events between the
+  snapshot (or the start, without one) and the first stored event were
+  removed by retention. It wraps `ErrHistoryTrimmed`; read `AggType`,
+  `AggID`, `StartVersion`, `StartSeq`, `FirstStoredVersion`,
+  `FirstStoredSeq` and `StreamFirstSeq` with `errors.As` to rebuild the
+  aggregate.
+- **es: `ErrVersionMismatch`** for any other version gap `Repository.Load`
+  finds.
+- **es: `StoreAppendOptions`, `StoreAppendOption`, `WithLastKnownSeq`,
+  `NewStoreAppendOptions`.**
+- **es: `InMemoryStore.TrimBefore(seq)`** drops every event below `seq`, as a
+  retention limit does. After it the in-memory store reports
+  `HistoryTrimmedError` and continues snapshot-only aggregates like the NATS
+  store, so consumers can test both states without a JetStream server.
 
 ## [v0.35.1] — 2026-08-03
 
@@ -45,7 +66,7 @@ All notable changes to this project will be documented in this file.
   consumers to accumulate under aggregate-heavy workloads, overwhelming the
   JetStream consumer metadata path and causing load, append, and subscription
   timeouts. Active loads are unaffected; the threshold starts after their pull
-  activity stops. (DEV-726)
+  activity stops.
 
 ## [v0.35.0] — 2026-08-03
 
